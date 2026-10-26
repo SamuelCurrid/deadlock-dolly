@@ -969,32 +969,36 @@ def launch(game_path: str | os.PathLike[str], demo_path: str | os.PathLike[str] 
                               "the original was backed up in this session's logs.")
         metadata["config_state"] = "mounted"
         _save_record(session_dir, metadata)
-        with (session_dir / "game_stdout.log").open("ab") as output:
-            with external_program_environment() as environment:
-                environment = dict(os.environ if environment is None else environment)
-                environment.update(settings["environment"])
-                # Dolly owns the one graphics callback for its optional manual
-                # ReShade runtime. Never install a second automatic DXGI hook.
-                # This environment belongs only to the launched development game.
-                if native:
-                    from .settings import reshade_config_path
-                    environment["RESHADE_DISABLE_GRAPHICS_HOOK"] = "1"
-                    environment["RESHADE_BASE_PATH_OVERRIDE"] = str(reshade_config_path().parent)
-                    environment["RESHADE_DISABLE_LOADING_CHECK"] = "1"
-                options = {} if environment is None else {"env": environment}
-                try:
-                    process = subprocess.Popen(command, cwd=str(paths.game_dir), stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, shell=False, **options)
-                except OSError as exc:
-                    if getattr(exc, "winerror", None) != 740:
-                        raise
-                    raise LaunchError(
-                        "Windows requires administrator permission to start Deadlock (WinError 740).\n\n"
-                        f"In File Explorer, right-click {paths.executable}, open Properties > Compatibility, "
-                        "and check 'Run this program as an administrator', including 'Change settings for all users'. "
-                        "Turn that option off if it was enabled unnecessarily, then retry Dolly.\n\n"
-                        "If administrator access is required on this computer, close Dolly and use "
-                        "Run as administrator on Dolly.exe before retrying.\n\n"
-                        f"Launch log: {log_path}") from exc
+        with external_program_environment() as environment:
+            environment = dict(os.environ if environment is None else environment)
+            environment.update(settings["environment"])
+            # Dolly owns the one graphics callback for its optional manual
+            # ReShade runtime. Never install a second automatic DXGI hook.
+            # This environment belongs only to the launched development game.
+            if native:
+                from .settings import reshade_config_path
+                environment["RESHADE_DISABLE_GRAPHICS_HOOK"] = "1"
+                environment["RESHADE_BASE_PATH_OVERRIDE"] = str(reshade_config_path().parent)
+                environment["RESHADE_DISABLE_LOADING_CHECK"] = "1"
+            options = {} if environment is None else {"env": environment}
+            # Launch with no standard-handle redirection. Deadlock samples its
+            # stdout handle during early engine init and disables DLSS whenever
+            # it finds a redirected handle, so capturing game_stdout.log here
+            # silently stripped DLSS from the in-game settings. Nothing in Dolly
+            # reads that log, so the game's handles are left unredirected.
+            try:
+                process = subprocess.Popen(command, cwd=str(paths.game_dir), shell=False, **options)
+            except OSError as exc:
+                if getattr(exc, "winerror", None) != 740:
+                    raise
+                raise LaunchError(
+                    "Windows requires administrator permission to start Deadlock (WinError 740).\n\n"
+                    f"In File Explorer, right-click {paths.executable}, open Properties > Compatibility, "
+                    "and check 'Run this program as an administrator', including 'Change settings for all users'. "
+                    "Turn that option off if it was enabled unnecessarily, then retry Dolly.\n\n"
+                    "If administrator access is required on this computer, close Dolly and use "
+                    "Run as administrator on Dolly.exe before retrying.\n\n"
+                    f"Launch log: {log_path}") from exc
         session = Session(process, session_dir, overlay, log_path, tuple(command), port, protocol, native=bridge)
 
         def watch() -> None:
