@@ -1219,6 +1219,31 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(int(result["tick"]), 125)
         self.assertEqual(self.console.requests.count("demo_resume"), 1)
 
+    def test_seek_nudges_a_forward_skip_undershoot_to_the_exact_tick(self):
+        self.controller._stop_event.clear()
+        self.console.goto_seek_output = (
+            "Demo Skipping: skipping forward to demo tick 125 (game tick 1000)"
+            " from current 50 (925)")
+        self.console.goto_outputs.extend([124] * 3 + [125] * 8)
+        result = self.controller._seek_tick(125)
+        self.assertNotIn("seek_boundary", result)
+        self.assertEqual(int(result["tick"]), 125)
+        self.assertEqual(self.console.requests.count("demo_resume"), 1)
+        nudges = self.controller._last_seek_details["undershoot_nudges"]
+        self.assertEqual([(n["from_tick"], n["target_tick"], n["packet_floor_reported"])
+                          for n in nudges], [(124, 125, False)])
+
+    def test_forward_skip_undershoot_is_never_silently_accepted_as_a_floor(self):
+        self.controller._stop_event.clear()
+        self.console.goto_seek_output = (
+            "Demo Skipping: skipping forward to demo tick 125 (game tick 1000)"
+            " from current 50 (925)")
+        self.console.goto_outputs.extend([124] * 500)
+        with self.assertRaisesRegex(RuntimeError, "did not reach tick 125"):
+            self.controller._seek_tick(125)
+        self.assertFalse(self.controller._last_seek_details["verified"])
+        self.assertEqual(self.console.requests.count("demo_resume"), 1)
+
     def test_seek_shot_time_holds_the_first_camera_at_a_floor_tick(self):
         project = make_project()
         info = {"tick": 99, "seek_boundary": {"requested_tick": 100, "actual_tick": 99,
