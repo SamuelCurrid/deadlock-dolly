@@ -4429,8 +4429,9 @@ class Controller(ReplayWarmupMixin, LayerModesMixin, ExportTimingMixin, PausedFl
         self._request("demo_pause")
         self._check_position_cancelled()
         seek_output = self._request(f"demo_gototick {target} 0 1", timeout=6)
+        forward_skip_reported = _reported_forward_seek(seek_output, target)
         correction_limit = (SEEK_REPORTED_FORWARD_OVERSHOOT_TICKS
-                            if _reported_forward_seek(seek_output, target)
+                            if forward_skip_reported
                             else SEEK_FORWARD_OVERSHOOT_TICKS)
         # Some replays initially expose tick 0, but their first reconstructible
         # full packet is tick 1. Recognize only that explicitly reported floor;
@@ -4540,13 +4541,17 @@ class Controller(ReplayWarmupMixin, LayerModesMixin, ExportTimingMixin, PausedFl
                 undershoot_tick = None
                 undershoot_samples = 0
             if undershoot_tick == target - 1 and undershoot_samples >= SEEK_SETTLE_SAMPLES \
-                    and packet_floor_reported:
+                    and (packet_floor_reported or forward_skip_reported):
                 if not undershoot_nudged and time.perf_counter() < end:
-                    # A paused skip can stop one tick before a packet-start
-                    # target without loading that packet. Nudge playback across
-                    # the boundary once, then demand the exact tick again.
                     undershoot_nudged = True
                     undershoot_samples = 0
+                    # The same bounded nudge covers a reported packet floor
+                    # and a verified forward seek that stopped one tick short.
+                    self._last_seek_details.setdefault("undershoot_nudges", []).append(
+                        {"from_tick": undershoot_tick, "target_tick": target,
+                         "packet_floor_reported": packet_floor_reported,
+                         "forward_skip_reported": forward_skip_reported,
+                         "at": time.perf_counter()})
                     self._check_position_cancelled()
                     self._request("demo_resume", allow_error=True)
                     self._stop_event.wait(min(.05, max(.001, end - time.perf_counter())))
@@ -4556,16 +4561,17 @@ class Controller(ReplayWarmupMixin, LayerModesMixin, ExportTimingMixin, PausedFl
                     pause_confirmed = False
                     wait_for_view = False
                     continue
-                # The engine cannot reconstruct the requested tick. Start at
-                # the recorded tick just before it instead of failing the shot;
-                # the caller holds the first camera over the short pre-roll.
-                self._last_seek_details.update(verified=True, actual_tick=undershoot_tick,
-                                               boundary="recorded_packet",
-                                               boundary_delta_ticks=undershoot_tick - target)
-                return dict(self._require_demo(require_tick=False),
-                            seek_boundary={"requested_tick": target,
-                                           "actual_tick": undershoot_tick,
-                                           "reason": "recorded_packet"})
+                if packet_floor_reported:
+                    # Start at the recorded tick just before the target instead of
+                    # failing the shot. A forward-skip undershoot is never accepted
+                    # here - it keeps trying for the exact tick.
+                    self._last_seek_details.update(verified=True, actual_tick=undershoot_tick,
+                                                   boundary="recorded_packet",
+                                                   boundary_delta_ticks=undershoot_tick - target)
+                    return dict(self._require_demo(require_tick=False),
+                                seek_boundary={"requested_tick": target,
+                                               "actual_tick": undershoot_tick,
+                                               "reason": "recorded_packet"})
             if overshoot_samples >= SEEK_SETTLE_SAMPLES and not corrections:
                 # A small forward seek can stop late. Reissuing the SAME target
                 # from there takes the backward-seek route. The wider six-tick
@@ -4597,6 +4603,7 @@ class Controller(ReplayWarmupMixin, LayerModesMixin, ExportTimingMixin, PausedFl
                     packet_floor_reported = bool(re.search(
                         r"Demo Skipping:[^\n]*from full packet\s+\d+", correction_output,
                         re.IGNORECASE))
+                    forward_skip_reported = _reported_forward_seek(correction_output, target)
                     self._check_position_cancelled()
                     stable = 0
                     overshoot_tick = None
