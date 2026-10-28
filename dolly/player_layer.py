@@ -30,6 +30,7 @@ import tempfile
 import threading
 from pathlib import Path
 
+from .ffmpeg_color import REC709_FILTER, REC709_OUTPUT_ARGS
 from .runtime import external_program_environment
 
 CAPTURE_MODE = "color-sequence-v3"
@@ -341,7 +342,8 @@ def encode_layer(ffmpeg: Path, previews: list[Path], output: Path, *, fps: int =
                "-framerate", str(fps), "-start_number", "0",
                "-i", str(previews[0].with_name(previews[0].name.replace("000", "%03d"))),
                "-frames:v", str(len(previews)), "-an", "-c:v", "prores_ks", "-profile:v", "4444",
-               "-pix_fmt", "yuva444p10le", "-vendor", "apl0", "-threads", "2", str(output)]
+               "-vf", REC709_FILTER, "-pix_fmt", "yuva444p10le", *REC709_OUTPUT_ARGS,
+               "-vendor", "apl0", "-threads", "2", str(output)]
     with external_program_environment() as environment:
         result = subprocess.run(command, capture_output=True, timeout=max(120, 30 * len(previews)),
                                 env=environment,
@@ -384,7 +386,8 @@ def encode_bundle(ffmpeg: Path, bundle: Path, output: Path, *, fps: int = 60,
                "-filter_threads", str(threads), "-filter_complex_threads", str(threads),
                "-f", "rawvideo", "-pix_fmt", "rgba", "-video_size", f"{width}x{height}",
                "-framerate", str(fps), "-i", "pipe:0", "-an", "-c:v", "prores_ks",
-               "-profile:v", "4444", "-pix_fmt", "yuva444p10le", "-vendor", "apl0",
+               "-profile:v", "4444", "-vf", REC709_FILTER, "-pix_fmt", "yuva444p10le",
+               *REC709_OUTPUT_ARGS, "-vendor", "apl0",
                "-threads", str(threads), str(temporary)]
     import itertools
     process = None; timer = None

@@ -27,6 +27,7 @@ def build_library(app):
         cancel_startup=app._cancel_startup,
         filter_replays=app._filter_replays,
         refresh_replays=app._refresh_replays,
+        repair_replay=app._repair_selected_replay,
         select_replay=app._select_replay,
         start_editing_session=app._start_editing_session,
         toggle_capture_hotkey=app._toggle_capture_hotkey,

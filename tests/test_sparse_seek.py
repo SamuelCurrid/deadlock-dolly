@@ -60,6 +60,27 @@ class SparseSeekTests(unittest.TestCase):
         self.assertTrue(self.controller._last_seek_details["verified"])
         self.assertEqual(self.controller._last_seek_details["commanded_tick"], 48394)
 
+    def test_reported_six_tick_overshoot_preserves_sparse_packet_and_camera_phase(self):
+        # Mirror the reported Players take: shot starts at 95; the next packet
+        # is 97; the forward seek briefly settles at 103. The correction must
+        # reach 97 exactly, and the authored camera phase stays tied to 95.
+        self.demo.write_bytes(synthetic_demo((1, 94, 97, 103, 3010)))
+        self.console.total_ticks = 3010
+        self.console.tick = self.console.goto_output = 94
+        self.console.overshoot = 6
+        self.console.goto_seek_output = (
+            'Demo Skipping: skipping forward to demo tick 97 (game tick 38982) '
+            'from current 94 (38979)')
+        self.project.start_tick = 95
+        saved = deepcopy(self.project.to_dict())
+        info = self.controller._seek(self.project, 0)
+        self.assertEqual([s['target'] for s in self.console.seek_attempts], [97, 97])
+        self.assertEqual(info['tick'], 97)
+        self.assertEqual(info['seek_boundary'], {'requested_tick': 95,
+            'actual_tick': 97, 'reason': 'recorded_packet'})
+        self.assertEqual(self.controller._seek_shot_time(self.project, 0, info), 2 / 64)
+        self.assertEqual(self.project.to_dict(), saved)
+
     def _replay_camera_seek(self, target, pose, *, owner='panel', **options):
         # Camera restoration has its own native-flight lifecycle owner. Keep
         # the actual packet selection and paused-seek verification here.

@@ -9,6 +9,7 @@ the people and projects behind it, from the original camera editor onward.
 | Contributor | Contribution |
 | --- | --- |
 | [Cravvnn](https://github.com/cravvnn) | Project creation, direction, ongoing development, game-update compatibility research, testing and releases. |
+| [**@ExoCalibra**](https://github.com/ExoCalibra) | Vertical-aim lock for Bone and Weapon cameras. See the [original contribution](https://github.com/cravvnn/deadlock-dolly/commit/f8e23dbdb811ccf76e51f88f72e8ff6086d317ed). |
 | [**@SamuelCurrid**](https://github.com/SamuelCurrid) | After Effects and USD camera exports, recorded camera tracks for path, attached and POV recordings, and export controls. See [PR #25](https://github.com/cravvnn/deadlock-dolly/pull/25). |
 | [**@paralin**](https://github.com/paralin) | Linux/Proton compatibility: Wine mount-point handling, Steam-library discovery and recovery from interrupted plugin cleanup. See merged [PR #10](https://github.com/cravvnn/deadlock-dolly/pull/10), [#11](https://github.com/cravvnn/deadlock-dolly/pull/11) and [#12](https://github.com/cravvnn/deadlock-dolly/pull/12). |
 | [**@tbhtho**](https://github.com/tbhtho) | The in-game UI rework and saved panel layouts that later editor updates build on. See the [original contribution](https://github.com/cravvnn/deadlock-dolly/commit/8521b341d78b26bbb1a3897d23eefb89d15b8363). |

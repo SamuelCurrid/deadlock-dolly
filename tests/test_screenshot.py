@@ -68,6 +68,13 @@ class StillProjectTests(unittest.TestCase):
         self.assertLess(screenshot.SETTLED_INDEX, frames)
         self.assertGreaterEqual(frames, player_layer.MIN_FRAMES)
 
+    def test_still_clock_is_accepted_for_players_capture(self):
+        # A still must reach the Players pass without exceeding its engine
+        # clock limit, while the held view advances by at most 20 ms in total.
+        rate = player_layer.validate_engine_rate(screenshot.STILL_FPS, screenshot.STILL_SPEED)
+        self.assertLessEqual(rate, 600.0)
+        self.assertLessEqual(screenshot.STILL_DURATION, 0.020000001)
+
     def test_rejects_missing_tick(self):
         with self.assertRaises(ValueError):
             screenshot.still_project(Project(), Keyframe(0, 0, 0, 0, 0, 0, 0), None)

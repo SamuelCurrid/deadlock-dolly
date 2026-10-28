@@ -34,6 +34,7 @@ from dolly.clip_audio import ClipAudioCapture
 from dolly.curve import AspectCurve, PositionCurve, POSITION_CHANNELS, POSITION_LIMIT, RotationCurve, TimelineView
 from dolly.curve_workspace import CameraCurveColumn, CameraCurveWorkspace
 from dolly.display import focus_window
+from dolly.ffmpeg_color import REC709_FRAME_TAGS, REC709_OUTPUT_ARGS, REC709_SCALE
 from dolly.hotkey import CaptureHotkey
 # Compatibility import for existing callback users.
 from .gui_theme import _clear_committed_combobox_selection
@@ -1450,10 +1451,10 @@ class DollyApp:
                 "[1:v]scale=in_range=tv:out_range=pc,format=gbrp[w];"
                 "[w][b]blend=all_mode=difference[d];"
                 "[d]format=gray,negate[a];"
-                "[b][a]alphamerge,format=yuva444p10le[out]",
+                f"[b][a]alphamerge,{REC709_SCALE},format=yuva444p10le,{REC709_FRAME_TAGS}[out]",
                 "-map", "[out]", "-an",
                 "-c:v", "prores_ks", "-profile:v", "4444",
-                "-pix_fmt", "yuva444p10le", "-vendor", "apl0", str(master)]
+                "-pix_fmt", "yuva444p10le", *REC709_OUTPUT_ARGS, "-vendor", "apl0", str(master)]
         from dolly.runtime import external_program_environment
         with external_program_environment() as environment:
             result = subprocess.run(args, capture_output=True, text=True,
@@ -2617,6 +2618,8 @@ class DollyApp:
                 bone_row.pack(fill="x", after=attach_point_combo)
             else:
                 bone_row.pack_forget()
+            if hasattr(self, "attach_lock_checkbox"):
+                self.attach_lock_checkbox.configure(state="normal" if self.attach_point.get() in ("Bone", "Weapon") else "disabled")
         self.attach_point.trace_add("write", update_bone_field)
         update_bone_field()
         from dolly.gui_theme import compact_slider
@@ -2630,6 +2633,13 @@ class DollyApp:
                            10 if name in ("x", "y", "z") else 180, PANEL, MUTED, ACCENT)
         self.attach_smoothing = tk.StringVar(value="0")
         compact_slider(attach, "Smooth", self.attach_smoothing, 0, 1, PANEL, MUTED, ACCENT)
+        self.attach_lock_vertical_aim = tk.BooleanVar(value=False)
+        self.attach_lock_checkbox = ttk.Checkbutton(attach, text="Lock vertical aim (Bone / Weapon)",
+            variable=self.attach_lock_vertical_aim, style="Card.TCheckbutton")
+        self.attach_lock_checkbox.pack(anchor="w", pady=(0, 2))
+        update_bone_field()
+        ttk.Label(attach, text="Detach before changing; Snap again to keep the current view.",
+                  style="CardMuted.TLabel", wraplength=240).pack(anchor="w", pady=(0, 6))
         self.attach_hide = tk.BooleanVar(value=True)
         ttk.Checkbutton(attach, text="Hide this hero", variable=self.attach_hide,
                         style="Card.TCheckbutton").pack(anchor="w", pady=(0, 6))
@@ -3356,6 +3366,8 @@ class DollyApp:
             self.preview_attach = False
             self._bone_picker_context = None
             self._attach_snap_pending = False
+            self._attach_snap_started = None
+            self._attach_snap_context = None
             self.native_editor_active = False
             self._native_editor_bridge = self._native_visualization_bridge = None
             self._native_visualization_cache = None
@@ -3478,6 +3490,34 @@ class DollyApp:
         if path:
             self.demo_path.set(path)
             self.replay_folder.set(str(Path(path).parent))
+
+    def _repair_selected_replay(self):
+        """Offer an experimental repair as a new file; leave the source alone."""
+        if self.busy:
+            self.status_text.set("Please wait for the current operation to finish.")
+            return
+        selected = self.demo_path.get().strip()
+        if not selected:
+            self._error("Replay repair", ValueError("Choose a replay to repair first."))
+            return
+        source = Path(selected)
+        destination = filedialog.asksaveasfilename(
+            parent=self.root, title="Save experimental repaired replay",
+            initialdir=str(source.parent), initialfile=source.stem + "-repaired.dem",
+            defaultextension=".dem", filetypes=(("Deadlock replay", "*.dem"),))
+        if not destination:
+            return
+        from .replay_repair import repair_replay
+
+        def finished(path):
+            self.status_text.set("Replay copy saved. Select it to try it in Deadlock.")
+            messagebox.showinfo(
+                "Replay copy saved",
+                "The experimental copy was saved to:\n" + str(path) +
+                "\n\nThe original replay was not changed. Open the copy to test whether it plays.",
+                parent=self.root)
+
+        self._submit("Repairing replay", lambda: repair_replay(source, Path(destination)), finished)
 
     def _launch(self):
         game, demo = self.game_path.get().strip(), self.demo_path.get().strip()
@@ -3926,6 +3966,7 @@ class DollyApp:
             for variable in self.attach_vars.values():
                 variable.set("0")
             self.attach_smoothing.set("0")
+            self.attach_lock_vertical_aim.set(False)
             self.attach_hide.set(True)
             self.attach_clearance.set("Exact offset")
             self.attach_point.set("Eyes")
@@ -3935,6 +3976,7 @@ class DollyApp:
         for variable, value in zip(self.attach_vars.values(), attach.offset):
             variable.set(_number(value))
         self.attach_smoothing.set(_number(attach.smoothing))
+        self.attach_lock_vertical_aim.set(attach.lock_vertical_aim)
         self.attach_hide.set(bool(attach.hide_body))
         self.attach_clearance.set("Automatic clearance" if attach.clearance_mode == "auto" else "Exact offset")
         self.attach_point.set(attach.point.title())
@@ -3989,7 +4031,9 @@ class DollyApp:
 
     def _attach_result_changed(self, result):
         """Apply native snap / attached-fly offsets to the selected attach key."""
-        if not (getattr(self, "preview_attach", False) or getattr(self, "_attach_snap_pending", False)):
+        preview = bool(getattr(self, "preview_attach", False))
+        snap_pending = bool(getattr(self, "_attach_snap_pending", False))
+        if not (preview or snap_pending) or (preview and snap_pending):
             return
         index = self._selection_index(self.camera_tree)
         if index is None or not 0 <= index < len(self.project.keyframes):
@@ -3999,17 +4043,29 @@ class DollyApp:
             return
         from .native_effects import model_token
         bridge = self.controller._native_bridge()
+        if snap_pending and not editor_session.snap_is_current(self, bridge):
+            editor_session.cancel_snap(self, "Snap cancelled because the selected camera changed.")
+            return
         if (not bridge or result.get("config_sequence") != bridge._editor_attach_sequence or
                 result.get("handle") != key.attach.handle or
+                (key.attach.entity_id and result.get("entity_index") != key.attach.entity_id) or
                 result.get("model") != model_token(key.attach.model) or
                 result.get("point") != ("eyes", "weapon", "bone").index(key.attach.point)):
             return
         self._attach_snap_pending = False
+        self._attach_snap_started = None
+        self._attach_snap_context = None
         offsets = tuple(float(value) for value in result.get("offset") or ())
-        if len(offsets) != 6 or offsets == tuple(key.attach.offset):
+        if len(offsets) != 6:
+            return
+        if snap_pending:
+            self.status_text.set("Snap complete. Choose Attach here to preview.")
+        if offsets == tuple(key.attach.offset) and (not snap_pending or key.attach.orientation_mode == "rigid"):
             return
         candidate = copy.deepcopy(self.project)
         candidate.keyframes[index].attach.offset = offsets
+        if snap_pending:
+            candidate.keyframes[index].attach.orientation_mode = "rigid"
         candidate.validate()
         self.project = candidate
         self._mark_dirty()
@@ -4032,6 +4088,15 @@ class DollyApp:
                     raise ValueError("The selected player has no readable model identity yet.")
                 offsets = tuple(_finite(self.attach_vars[name].get(), "Attach offset")
                                 for name in ("x", "y", "z", "pitch", "yaw", "roll"))
+                selected_attach = candidate.keyframes[index].attach
+                lock_vertical_aim = bool(self.attach_lock_vertical_aim.get())
+                changing_lock = any(
+                    isinstance(candidate.keyframes[target].attach, AttachKey) and
+                    candidate.keyframes[target].attach.lock_vertical_aim != lock_vertical_aim
+                    for target in targets)
+                if changing_lock and (getattr(self, "_attach_snap_pending", False) or
+                                      not self._shot_edit_ready()):
+                    raise ValueError("Detach and finish Snap or recording before changing vertical aim lock.")
                 attach = AttachKey(handle=int(player.get("handle", 0)),
                                    entity_id=int(player.get("entity_index", 0) or 0),
                                    model=model_path,
@@ -4040,7 +4105,10 @@ class DollyApp:
                                    offset=offsets,
                                    smoothing=_finite(self.attach_smoothing.get(), "Attach smoothing"),
                                    hide_body=bool(self.attach_hide.get()),
-                                   clearance_mode="auto" if self.attach_clearance.get() == "Automatic clearance" else "exact")
+                                   clearance_mode="auto" if self.attach_clearance.get() == "Automatic clearance" else "exact",
+                                   orientation_mode=selected_attach.orientation_mode
+                                   if isinstance(selected_attach, AttachKey) else "legacy",
+                                   lock_vertical_aim=lock_vertical_aim)
             for target in targets:
                 candidate.keyframes[target].source_blend = float(self.source_blend.get())
                 candidate.keyframes[target].source = "attach" if attach else "free"

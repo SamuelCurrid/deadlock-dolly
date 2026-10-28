@@ -4,6 +4,17 @@ Release history. Each section describes its own version; controls and limits
 may have changed since then. Use the [current documentation](README.md) for
 setup and operation.
 
+## 0.6.80-alpha
+
+- Add a per-camera **Lock vertical aim** option for Bone and Weapon attachments, based on [@ExoCalibra's contribution](https://github.com/cravvnn/deadlock-dolly/commit/f8e23dbdb811ccf76e51f88f72e8ff6086d317ed). Existing cameras leave it off.
+- Keep newly snapped attachment framing together as the player moves and changes aim, and allow exact position offsets beyond the small slider range. Existing attached cameras retain their original behavior until snapped again.
+- Offer an experimental, opt-in repair for completed replays with duplicated incomplete spawn-group loads and a later completed manifest update. It changes only the matching manifest flags, verifies the replay index, and leaves the original untouched. Playback and seeking of repaired copies still require testing in Deadlock.
+- Report a same-build replay crash without assuming that the recording is incomplete; suggest a direct game comparison and the experimental copy when applicable.
+- Convert compressed SDR video and ProRes alpha masters to limited-range Rec. 709 and write matching color information. Keep lossless RGB and numerical depth data on their existing paths.
+- Accept FFmpeg MOV color recordings and explicitly signal the range for H.264 via FFmpeg Media Foundation.
+
+Full details: [0.6.80 release notes](RELEASE_NOTES_0.6.80-alpha.md).
+
 ## 0.6.79-alpha
 
 - Add reviewed support for Deadlock build 6821: relocate the camera, replay, preload, Follow, observer schema and attachment contracts while retaining exact module, code and named-type checks.

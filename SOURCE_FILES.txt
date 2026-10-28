@@ -144,6 +144,7 @@ docs/RELEASE_NOTES_0.6.76-alpha.md
 docs/RELEASE_NOTES_0.6.77-alpha.md
 docs/RELEASE_NOTES_0.6.78-alpha.md
 docs/RELEASE_NOTES_0.6.79-alpha.md
+docs/RELEASE_NOTES_0.6.80-alpha.md
 docs/DISCORD_PRESENCE.md
 docs/SCREENSHOTS.md
 docs/SUPPORTED_CAMERA_CVARS.json
@@ -211,6 +212,7 @@ dolly/editor_session.py
 dolly/editor_view.py
 dolly/editor_wire.py
 dolly/encoder_select.py
+dolly/ffmpeg_color.py
 dolly/export_audit.py
 dolly/export_timing.py
 dolly/file_ops.py
@@ -266,6 +268,7 @@ dolly/replay_camera.py
 dolly/replay_event_wire.py
 dolly/replay_events.py
 dolly/replay_player_focus.py
+dolly/replay_repair.py
 dolly/replay_warmup.py
 dolly/replays.py
 dolly/reshade_setup.py
@@ -513,6 +516,7 @@ native/tests/replay_clock_tests.cpp
 native/tests/replay_events_tests.cpp
 native/tests/reviewed_contract_tests.cpp
 native/tests/sound_compat_tests.cpp
+native/tests/video_color_smoke.cpp
 native/tests/video_math_tests.cpp
 native/tests/video_smoke.cpp
 native/tests/visualization_tests.cpp
@@ -683,6 +687,7 @@ tests/test_release_packaging.py
 tests/test_replay_camera.py
 tests/test_replay_events.py
 tests/test_replay_recovery.py
+tests/test_replay_repair.py
 tests/test_replay_warmup.py
 tests/test_replays.py
 tests/test_reshade_setup.py
@@ -718,6 +723,7 @@ tests/test_ui_widgets.py
 tests/test_update_consent.py
 tests/test_update_notice.py
 tests/test_updater.py
+tests/test_video_color_integration.py
 tests/test_video_export.py
 tests/test_visualization_preview.py
 tests/test_visualization_transport.py

@@ -249,7 +249,8 @@ void OverlayPanel::roster_label(const EditorRosterEntry& entry, char* out, std::
 OverlayPanel::SliderRow OverlayPanel::slider_row(const char* id, const char* label, float* value,
                                                  float minimum, float maximum, const char* format,
                                                  float label_width,
-                                                 const VisualizationPath* timeline, bool replay_track) {
+                                                 const VisualizationPath* timeline, bool replay_track,
+                                                 bool unclamped_entry) {
     SliderRow result;
     const bool timeline_mode = (timeline != nullptr || replay_track) && maximum > minimum;
     if (timeline_mode) {
@@ -297,7 +298,8 @@ OverlayPanel::SliderRow OverlayPanel::slider_row(const char* id, const char* lab
     for (const auto color : {ImGuiCol_FrameBg, ImGuiCol_FrameBgHovered, ImGuiCol_FrameBgActive,
                              ImGuiCol_SliderGrab, ImGuiCol_SliderGrabActive, ImGuiCol_Border})
         ImGui::PushStyleColor(color, ImVec4(0, 0, 0, 0));
-    ImGui::SliderFloat(id, value, slider_min, slider_max, "", ImGuiSliderFlags_AlwaysClamp);
+    ImGui::SliderFloat(id, value, slider_min, slider_max, "",
+                       unclamped_entry ? ImGuiSliderFlags_None : ImGuiSliderFlags_AlwaysClamp);
     result.committed = ImGui::IsItemDeactivatedAfterEdit();
     result.active = ImGui::IsItemActive();
     const bool deactivated = ImGui::IsItemDeactivated();
@@ -1381,7 +1383,7 @@ void OverlayPanel::draw_panel(const EditorSnapshot& state) {
                         ImGui::SetTooltip(
                             "Live preview: the camera follows this player. Transfers from Follow automatically; WASD and the mouse edit the offsets.");
                     ImGui::SameLine();
-                    ImGui::BeginDisabled(!state.manual_active);
+                    ImGui::BeginDisabled(!state.manual_active || state.attach_preview);
                     action_button("Snap", EditorAction::AttachSnap, attach_half);
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip(
@@ -1394,7 +1396,7 @@ void OverlayPanel::draw_panel(const EditorSnapshot& state) {
                     else if (!state.manual_active && !state.follow_active)
                         ImGui::TextDisabled("Start Fly camera to preview or snap.");
                     else if (state.attach_preview)
-                        ImGui::TextDisabled("Preview active; fly to edit the offsets live.");
+                        ImGui::TextDisabled("Preview active; detach to snap a free-camera view.");
                     else
                         ImGui::TextDisabled("Fly to frame, then Snap, then Attach here.");
                     }
@@ -1410,6 +1412,24 @@ void OverlayPanel::draw_panel(const EditorSnapshot& state) {
                 if (begin_panel_card("##attach-framing")) {
                     section_title("Frame the camera", "Offsets");
                     ImGui::BeginDisabled(!state.attach_available);
+                    EditorCameraList aim_list{};
+                    const bool aim_list_ok = editor_camera_list(aim_list) &&
+                                             aim_list.total == state.camera_count &&
+                                             state.selected_camera < aim_list.total;
+                    ImGui::BeginDisabled(!state.attach_selected || state.attach_point == 0 ||
+                                         !state.paused || state.playing || state.attach_preview ||
+                                         state.bone_picker || recording_locked || !aim_list_ok);
+                    bool aim_lock = state.attach_lock_vertical_aim;
+                    if (compact_checkbox("Lock vertical aim", &aim_lock, panel_scale)) {
+                        CameraPose request{};
+                        request[0] = double(aim_list.revision);
+                        request[1] = double(state.selected_camera);
+                        editor_enqueue(EditorAction::SetAttachVerticalAimLock, aim_lock ? 1 : 0, &request);
+                    }
+                    ImGui::EndDisabled();
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                        ImGui::SetTooltip("Bone/weapon follows the player without tilting with aim. "
+                                          "Detach, change this setting, then Snap again to keep your view.");
                     {
                         // Slider rows commit at the end of an edit, not per frame.
                         static float attach_draft[6]{};
@@ -1425,10 +1445,19 @@ void OverlayPanel::draw_panel(const EditorSnapshot& state) {
                             char id[32]{};
                             std::snprintf(id, sizeof(id), "##attach-offset-%d", index);
                             const bool position = index < 3;
+                            // Snap may author distances much larger than the
+                            // normal fine-adjustment range. Keep those values
+                            // visible on the slider; exact input can use the
+                            // full range accepted by the attach action.
+                            const float position_range = position
+                                ? std::min(float(kAttachOffsetLimit),
+                                           std::max(10.0f, std::abs(float(state.attach_offsets[index])) + 10.0f))
+                                : 180.0f;
                             const SliderRow row =
                                 slider_row(id, kAttachAxis[index], &attach_draft[index],
-                                           position ? -10.0f : -180.0f, position ? 10.0f : 180.0f,
-                                           position ? "%.2f" : "%.1f", 74.0f);
+                                           -position_range, position_range,
+                                           position ? "%.2f" : "%.1f", 74.0f,
+                                           nullptr, false, position);
                             attach_active = attach_active || row.active;
                             attach_commit = attach_commit || row.committed;
                         }

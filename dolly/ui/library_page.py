@@ -30,6 +30,7 @@ class LibraryActions:
     cancel_startup: Callable[..., object]
     filter_replays: Callable[..., object]
     refresh_replays: Callable[..., object]
+    repair_replay: Callable[..., object]
     select_replay: Callable[..., object]
     start_editing_session: Callable[..., object]
     toggle_capture_hotkey: Callable[..., object]
@@ -76,7 +77,8 @@ class LibraryPage:
         self.replay_tree.bind("<Double-1>", lambda _e: commands.use_selected_replay())
         buttons = ttk.Frame(left, style="Card.TFrame")
         buttons.grid(row=3, column=0, sticky="ew")
-        actions(buttons, (("Browse .dem...", commands.browse_demo), ("Refresh", commands.refresh_replays)), 2)
+        actions(buttons, (("Browse .dem...", commands.browse_demo), ("Refresh", commands.refresh_replays),
+                          ("Try replay repair...", commands.repair_replay)), 2)
         self.selected_replay_text = tk.StringVar()
         selected = ttk.Frame(right, style="Card.TFrame")
         selected.grid(row=1, column=0, sticky="ew", pady=(0, GAP))

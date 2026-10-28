@@ -251,7 +251,8 @@ private:
                        bool primary = false);
     SliderRow slider_row(const char* id, const char* label, float* value, float minimum,
                          float maximum, const char* format, float label_width = 58.0f,
-                         const VisualizationPath* timeline = nullptr, bool replay_track = false);
+                         const VisualizationPath* timeline = nullptr, bool replay_track = false,
+                         bool unclamped_entry = false);
     void section_title(const char* title, const char* detail = nullptr);
     bool begin_panel_card(const char* name);
     bool inline_controls(const char* label, const char* display = nullptr);

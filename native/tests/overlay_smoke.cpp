@@ -1237,6 +1237,45 @@ static void panel_option_regressions() {
     frame(); frame();
     require(observed_actions.size() == 1 && observed_actions[0].action == dolly::EditorAction::AttachSnap,
             "Bone layout changes its existing Snap action");
+    const auto snap_rect = attach_target->NavRectRel[ImGuiNavLayer_Main];
+    require(snap_rect.GetWidth() > 0 && snap_rect.GetHeight() > 0,
+            "Snap button has no pointer rectangle");
+    snapshot.attach_preview = true;
+    frame(); frame();
+    observed_actions.clear();
+    const auto snap_point = snap_rect.GetCenter();
+    io.AddMousePosEvent(attach_target->Pos.x + snap_point.x, attach_target->Pos.y + snap_point.y);
+    frame(); frame();
+    io.AddMouseButtonEvent(0, true); frame();
+    io.AddMouseButtonEvent(0, false); frame(); frame();
+    require(observed_actions.empty(), "Attached preview queued a free-camera snap");
+    snapshot.attach_preview = false;
+    snapshot.attach_point = 2;
+    snapshot.camera_count = 2;
+    snapshot.selected_camera = 1;
+    frame(); frame();
+    observed_actions.clear();
+    test_context->NavNextActivateId = attach_framing->GetID("Lock vertical aim");
+    frame(); frame();
+    require(observed_actions.size() == 1 &&
+                observed_actions[0].action == dolly::EditorAction::SetAttachVerticalAimLock &&
+                observed_actions[0].value == 1 && observed_actions[0].pose[0] == camera_revision_stub &&
+                observed_actions[0].pose[1] == snapshot.selected_camera,
+            "Bone framing lost the selected-camera level-aim request");
+    const auto aim_rect = attach_framing->NavRectRel[ImGuiNavLayer_Main];
+    require(aim_rect.GetWidth() > 0 && aim_rect.GetHeight() > 0,
+            "Vertical aim lock has no pointer rectangle");
+    snapshot.attach_preview = true;
+    frame(); frame();
+    observed_actions.clear();
+    const auto aim_point = aim_rect.GetCenter();
+    io.AddMousePosEvent(attach_framing->Pos.x + aim_point.x, attach_framing->Pos.y + aim_point.y);
+    frame(); frame();
+    io.AddMouseButtonEvent(0, true); frame();
+    io.AddMouseButtonEvent(0, false); frame(); frame();
+    require(observed_actions.empty(), "Attached preview accepted a vertical-aim change");
+    snapshot.attach_preview = false;
+    frame(); frame();
     observed_actions.clear();
     test_context->NavNextActivateId = attach_framing->GetID("##attach-offset-0");
     test_context->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
@@ -1251,6 +1290,28 @@ static void panel_option_regressions() {
                 observed_actions[0].value == 0 && observed_actions[0].pose[0] == 5.5 &&
                 observed_actions[0].pose[2] == snapshot.attach_offsets[2],
             "Bone framing changes its existing six-axis offset payload");
+    // A snapped camera can be farther than the small slider's ten-unit range.
+    // Exact entry must keep that distance and all other authored offsets.
+    snapshot.attach_offsets[0] = 17.5;
+    snapshot.attach_offsets[1] = -31.25;
+    snapshot.attach_offsets[2] = 8.75;
+    frame(); frame();
+    observed_actions.clear();
+    test_context->NavNextActivateId = attach_framing->GetID("##attach-offset-0");
+    test_context->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
+    frame(); frame();
+    require(test_context->InputTextState.ID == test_context->ActiveId && test_context->ActiveId,
+            "A snapped offset cannot be edited as an exact number");
+    io.AddInputCharactersUTF8("75.25");
+    frame();
+    io.AddKeyEvent(ImGuiKey_Enter, true); frame();
+    io.AddKeyEvent(ImGuiKey_Enter, false); frame(); frame();
+    require(observed_actions.size() == 1 &&
+                observed_actions[0].action == dolly::EditorAction::SetAttachOffsets &&
+                observed_actions[0].pose[0] == 75.25 &&
+                observed_actions[0].pose[1] == -31.25 &&
+                observed_actions[0].pose[2] == 8.75,
+            "Editing a snapped offset truncated it or changed another axis");
     test_context->NavNextActivateId = main->GetID("Export###EXPORT");
     frame(); frame();
     observed_actions.clear();

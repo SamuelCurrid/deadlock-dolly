@@ -29,6 +29,36 @@ VCONSOLE_VERSION = 0x00D40000
 MAX_PACKET_SIZE = 65535
 _HEADER = struct.Struct("!4sIHH")
 
+# These two engine warnings can repeat continuously while a replay plays. The
+# first has no terminating newline, so the game's next print can be attached to
+# it. Keep the unmodified stream in recent_output(); only command replies omit
+# these exact messages so unrelated errors and the normal response limit remain.
+_REPLAY_COMMAND_WARNINGS = (
+    "Ignoring CSVCMsg_UserCommands_t with no command data",
+    "Ignoring CSVCMsg_UserCommands_t: Missing command to delta from",
+)
+
+
+class _ReplayWarningFilter:
+    """Remove known replay-warning text across arbitrary received chunks."""
+
+    def __init__(self):
+        self.pending = ""
+        self.suppressed = 0
+
+    def feed(self, chunk: str) -> str:
+        text = self.pending + chunk
+        self.pending = ""
+        for warning in _REPLAY_COMMAND_WARNINGS:
+            self.suppressed += text.count(warning)
+            text = text.replace(warning, "")
+        # Both known messages start with I. Retain a possible incomplete
+        # prefix so a warning split across TCP reads is not leaked piecemeal.
+        index = text.rfind("I")
+        if index >= 0 and any(warning.startswith(text[index:]) for warning in _REPLAY_COMMAND_WARNINGS):
+            self.pending, text = text[index:], text[:index]
+        return text
+
 
 def _console_fallback_encoding() -> str:
     """Active Windows ANSI code page, used when console bytes are not UTF-8."""
@@ -300,6 +330,7 @@ class ConsoleClient:
         self._event_bytes = 0
         self._sequence = 0
         self._failure: str | None = None
+        self._replay_warning_logged = False
 
     @property
     def is_connected(self) -> bool:
@@ -347,6 +378,7 @@ class ConsoleClient:
                 self._events.clear()
                 self._event_bytes = 0
                 self._sequence = 0
+                self._replay_warning_logged = False
             self._reader = threading.Thread(target=self._read_loop, args=(sock,), daemon=True, name="dolly-console")
             self._reader.start()
 
@@ -474,6 +506,7 @@ class ConsoleClient:
             output = ""
             began = False
             ended = False
+            warning_filter = _ReplayWarningFilter()
             while True:
                 with self._condition:
                     if self._events and cursor < self._events[0][0] - 1:
@@ -483,20 +516,24 @@ class ConsoleClient:
                         cursor = new[-1][0]
                     failure = self._failure
                 for _, chunk in new:
-                    output += chunk
+                    output += warning_filter.feed(chunk)
+                if warning_filter.suppressed and not self._replay_warning_logged:
+                    LOG.warning("Game reported missing replay user commands; repeated warnings are omitted "
+                                "from command replies but remain in the bounded console diagnostics.")
+                    self._replay_warning_logged = True
                 if not began:
-                    found = begin_re.search(output)
+                    found = _find_printed_marker(output, begin_re)
                     if found:
-                        output = output[found.end():]
+                        output = output[found[1]:]
                         began = True
                 if began and not ended:
-                    found = end_re.search(output)
+                    found = _find_printed_marker(output, end_re)
                     if found:
-                        response = output[:found.start()]
+                        response = output[:found[0]]
                         if patterns:
                             # A worker may print its completion after the echo.
                             # Keep that fresh suffix while discarding delimiters.
-                            response += output[found.end():]
+                            response += output[found[1]:]
                         # A line console can print the entered `echo END` before
                         # it prints END itself. Keep delimiters out of results.
                         output = "".join(line for line in response.splitlines(keepends=True)
@@ -570,7 +607,25 @@ class ConsoleClient:
 
 
 def _marker_re(marker: str) -> re.Pattern:
-    return re.compile(r"(?m)^[ \t]*(?:\[[^\]\r\n]*\][ \t]*)*" + re.escape(marker) + r"[ \t\r]*\n")
+    return re.compile(re.escape(marker) + r"[ \t\r]*\n")
+
+
+def _find_printed_marker(output: str, marker: re.Pattern) -> tuple[int, int] | None:
+    """Find an actual echo, including one glued to a known warning's tail.
+
+    A request starts at a fresh history cursor, which can cut into the warning
+    already being printed. Accept only a line prefix that is a suffix of one of
+    those exact warnings; an echoed command such as ``> echo MARKER`` still
+    cannot acknowledge a request. Never use earlier history as a response.
+    """
+    for match in marker.finditer(output):
+        line_start = output.rfind("\n", 0, match.start()) + 1
+        prefix = output[line_start:match.start()]
+        normal = re.fullmatch(r"[ \t]*(?:\[[^\]\r\n]*\][ \t]*)*", prefix)
+        warning_tail = prefix and any(warning.endswith(prefix) for warning in _REPLAY_COMMAND_WARNINGS)
+        if normal or warning_tail:
+            return line_start, match.end()
+    return None
 
 
 def _compile_completion_patterns(values: tuple[str, ...] | None) -> tuple[re.Pattern, ...]:

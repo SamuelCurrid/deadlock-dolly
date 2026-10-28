@@ -5,6 +5,7 @@ from dataclasses import replace
 import copy
 import logging
 import math
+import time
 from .editor_wire import ATTACH_OFFSET_LIMIT
 from .native_effects import model_token
 from .path import AttachKey
@@ -805,6 +806,28 @@ def _dispatch(app, event, bridge, *, publish):
 
         _attach_edit(app, mutate_hide)
         publish()
+    elif action == "set_attach_vertical_aim_lock":
+        if isinstance(event["value"], bool) or event["value"] not in (0, 1):
+            raise ValueError("Vertical aim lock must be on or off.")
+        pose = event.get("pose") or ()
+        index = app._selection_index(app.camera_tree)
+        history = getattr(app, "shot_history", None)
+        if (len(pose) != 7 or history is None or pose[0] != history.revision or
+                index is None or pose[1] != index):
+            raise ValueError("The camera changed. Select it and try again.")
+        if getattr(app, "_attach_snap_pending", False):
+            raise ValueError("Wait for Snap to finish before changing vertical aim lock.")
+        if not app._shot_edit_ready():
+            return True
+
+        def mutate_aim(key):
+            if not isinstance(key.attach, AttachKey) or key.attach.point not in ("bone", "weapon"):
+                raise ValueError("Choose a bone or weapon before changing vertical aim lock.")
+            key.attach.lock_vertical_aim = bool(event["value"])
+
+        _attach_edit(app, mutate_aim)
+        app.status_text.set("Vertical aim lock changed. Snap again to keep the current view.")
+        publish()
     elif action == "set_source_blend":
         value = float(event["value"])
         if not math.isfinite(value) or not 0 <= value <= 10:
@@ -814,6 +837,8 @@ def _dispatch(app, event, bridge, *, publish):
     elif action == "attach_reset":
         app.preview_attach = False
         app._attach_snap_pending = False
+        app._attach_snap_started = None
+        app._attach_snap_context = None
 
         def mutate_reset(key):
             key.source = "free"
@@ -824,6 +849,8 @@ def _dispatch(app, event, bridge, *, publish):
     elif action == "attach_preview":
         if event["value"] not in (0, 1):
             raise ValueError("Attach preview must be on or off.")
+        if event["value"] == 1 and getattr(app, "_attach_snap_pending", False):
+            raise ValueError("Wait for Snap to finish before attaching the camera.")
         if event["value"] == 1 and getattr(app.controller, "_follow_active", False) is True:
             project = app.project
 
@@ -847,8 +874,20 @@ def _dispatch(app, event, bridge, *, publish):
             _native_operation(app, "Detaching camera",
                               lambda: app.controller.enter_native_flight(owner="panel"), bridge)
     elif action == "attach_snap":
+        if getattr(app, "preview_attach", False):
+            raise ValueError("Detach the camera before snapping a free-camera view.")
+        index = app._selection_index(app.camera_tree)
+        if index is None or not 0 <= index < len(app.project.keyframes):
+            raise ValueError("Select an attached camera before snapping.")
+        selected = app.project.keyframes[index]
+        if selected.source != "attach" or not isinstance(selected.attach, AttachKey):
+            raise ValueError("Select an attached camera before snapping.")
+        app._attach_snap_context = {
+            "project": app.project, "index": index, "key": copy.deepcopy(selected), "bridge": bridge,
+        }
         app._attach_snap_request = int(getattr(app, "_attach_snap_request", 0)) + 1
         app._attach_snap_pending = True
+        app._attach_snap_started = time.monotonic()
         app.status_text.set("Snap requested; the next free-camera frame stores its offsets.")
         publish()
     else:

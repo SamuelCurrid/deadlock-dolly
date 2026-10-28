@@ -312,6 +312,46 @@ class BundleEncodingTests(unittest.TestCase):
         self.assertEqual(self.bundle.read_bytes(), self.raw)
         self.assertEqual(list(self.root.glob("*.partial.mov")), [])
 
+    def test_real_bundled_encoder_writes_rec709_color_and_preserves_alpha(self):
+        from dolly.video_export import bundled_ffmpeg_path
+        ffmpeg = bundled_ffmpeg_path()
+        if ffmpeg is None:
+            self.skipTest("Bundled FFmpeg is unavailable")
+        # Blocks survive ProRes quantization while exercising both RGB-to-YUV
+        # matrix choice and nontrivial alpha in the actual Players encoder.
+        blocks = ((1000, 0, 0, 1), (0, 500, 0, .5), (0, 0, 1000, 1), (0, 0, 0, 0))
+        with self.bundle.open("wb") as stream:
+            stream.write(struct.pack("<8Q", player_layer.BUNDLE_MAGIC, 64, 64, 1, 0, 0, 0, 8))
+            for y in range(64):
+                for x in range(64):
+                    stream.write(struct.pack("<4e", *blocks[(y // 32) * 2 + x // 32]))
+        previews = player_layer.write_previews(self.bundle, self.root / "previews")
+        for method in ("bundle", "preview"):
+            with self.subTest(method=method):
+                if method == "bundle":
+                    player_layer.encode_bundle(ffmpeg, self.bundle, self.output, fps=30)
+                else:
+                    player_layer.encode_layer(ffmpeg, previews, self.output, fps=30)
+                info = subprocess.run(
+                    [str(ffmpeg), "-hide_banner", "-i", str(self.output), "-vf", "showinfo",
+                     "-frames:v", "1", "-f", "null", "-"],
+                    capture_output=True, check=True, timeout=30,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stderr.decode(errors="replace")
+                self.assertIn("color_range:tv color_space:bt709 color_primaries:bt709 color_trc:bt709", info)
+                pixels = subprocess.run(
+                    [str(ffmpeg), "-hide_banner", "-loglevel", "error", "-i", str(self.output),
+                     "-frames:v", "1", "-pix_fmt", "yuva444p10le", "-f", "rawvideo", "pipe:1"],
+                    capture_output=True, check=True, timeout=30,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+                self.assertEqual(len(pixels), 64 * 64 * 8)
+                for x, y, expected_y, expected_alpha in ((16, 16, 250, 1023), (48, 16, 691, 514),
+                                                          (16, 48, 127, 1023), (48, 48, 64, 0)):
+                    index = (y * 64 + x) * 2
+                    luma = struct.unpack_from("<H", pixels, index)[0]
+                    alpha = struct.unpack_from("<H", pixels, 64 * 64 * 6 + index)[0]
+                    self.assertLessEqual(abs(luma - expected_y), 4)
+                    self.assertLessEqual(abs(alpha - expected_alpha), 4)
+
 
 class LayerEncodeEnvironmentTests(unittest.TestCase):
     """Layer encoding launches FFmpeg like the other encoders: clean env, no console."""

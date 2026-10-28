@@ -59,9 +59,10 @@ class PageBoundaryTests(unittest.TestCase):
         self.assertEqual(view.selected_replay_text.get(), 'example.dem')
         state.replay_search.set('example')
         view.play_replay_button.invoke()
+        self.button('Try replay repair...').invoke()
         self.button('Stop / restore').invoke()
         self.button('Save as...').invoke()
-        self.assertEqual([c[0] for c in self.calls], ['filter_replays', 'start_editing_session', 'stop_session', 'save_as'])
+        self.assertEqual([c[0] for c in self.calls], ['filter_replays', 'start_editing_session', 'repair_replay', 'stop_session', 'save_as'])
         self.assertEqual(str(view.cancel_startup_button.cget('state')), 'disabled')
         self.assertEqual(tuple(view.home_camera_driver_combo.cget('values')), ('Native (experimental)', 'Console (legacy)'))
 

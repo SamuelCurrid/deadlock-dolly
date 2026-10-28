@@ -239,6 +239,11 @@ CAMERA_HEIGHT_PROBE = 16.0
 CAMERA_CORRECTION_LIMIT = 12
 SEEK_SETTLE_INTERVAL = .04
 SEEK_SETTLE_SAMPLES = 3
+SEEK_FORWARD_OVERSHOOT_TICKS = 4
+# The engine reported an adjacent forward seek to tick 97, but paused at 103.
+# Expand only the existing exact-target correction when the fresh seek response
+# identifies a consistent forward movement in both replay and game ticks.
+SEEK_REPORTED_FORWARD_OVERSHOOT_TICKS = 6
 CAMERA_DRIFT_LIMIT = 64.0
 CAMERA_DRIFT_SAMPLES = 3
 NATIVE_PAUSE_TIMEOUT = 8.0
@@ -299,6 +304,20 @@ REPLAY_CLEANUP_COMMANDS = (
     "cl_ent_remove_all citadel_artist_solidblocker",
     "cl_ent_remove_all C_Citadel_Artist_SolidBlocker",
 )
+
+
+def _reported_forward_seek(output, target):
+    """Recognize one consistent engine report for the commanded forward seek."""
+    reports = re.findall(
+        r"Demo Skipping:\s*skipping forward to demo tick (\d+)\s+"
+        r"\(game tick (\d+)\)\s+from current (\d+)\s+\((\d+)\)",
+        output, re.IGNORECASE)
+    if len(reports) != 1:
+        return False
+    requested, game_target, previous, game_previous = map(int, reports[0])
+    return (requested == target and 0 <= previous < requested <= 0x7fffffff
+            and 0 <= game_previous <= game_target <= 0x7fffffff
+            and game_target - game_previous == requested - previous)
 
 
 class CameraPositionError(RuntimeError):
@@ -587,9 +606,10 @@ class Controller(ReplayWarmupMixin, LayerModesMixin, ExportTimingMixin, PausedFl
         if (recorded_build is not None and self._game_build is not None
                 and recorded_build == self._game_build):
             message = (f"{reason} while {context}. The selected replay was recorded on this build "
-                       f"({self._game_build}), so the .dem itself is likely incomplete or from a match whose "
-                       "content this build does not include (for example a private or experimental recording). "
-                       "Try another replay, or re-record it on this install, then launch again through Dolly.")
+                       f"({self._game_build}), but that does not establish why it crashed. Try opening the "
+                       "same replay directly in Deadlock. Dolly's Replays & Shots page also offers an "
+                       "experimental repair for a specific startup crash; it saves a separate copy and "
+                       "does not guarantee playback.")
         else:
             message = (f"{reason} while {context}. A replay that this game build cannot "
                        "reconstruct (for example an incompatible or incomplete .dem) can fatal Deadlock as soon as "
@@ -4409,6 +4429,9 @@ class Controller(ReplayWarmupMixin, LayerModesMixin, ExportTimingMixin, PausedFl
         self._request("demo_pause")
         self._check_position_cancelled()
         seek_output = self._request(f"demo_gototick {target} 0 1", timeout=6)
+        correction_limit = (SEEK_REPORTED_FORWARD_OVERSHOOT_TICKS
+                            if _reported_forward_seek(seek_output, target)
+                            else SEEK_FORWARD_OVERSHOOT_TICKS)
         # Some replays initially expose tick 0, but their first reconstructible
         # full packet is tick 1. Recognize only that explicitly reported floor;
         # a nearby tick alone is never sufficient evidence to change a target.
@@ -4504,7 +4527,7 @@ class Controller(ReplayWarmupMixin, LayerModesMixin, ExportTimingMixin, PausedFl
                 self._request("demo_pause")
                 pause_confirmed = True
                 stable = 0
-            if target < observed <= target + 4:
+            if target < observed <= target + correction_limit:
                 overshoot_samples = overshoot_samples + 1 if observed == overshoot_tick else 1
                 overshoot_tick = observed
             else:
@@ -4544,9 +4567,10 @@ class Controller(ReplayWarmupMixin, LayerModesMixin, ExportTimingMixin, PausedFl
                                            "actual_tick": undershoot_tick,
                                            "reason": "recorded_packet"})
             if overshoot_samples >= SEEK_SETTLE_SAMPLES and not corrections:
-                # Native forward seeks can stop up to four ticks late (6774:
-                # request15301 settled at15305). Reissuing the
-                # SAME target from there takes the backward-seek route. Do not
+                # A small forward seek can stop late. Reissuing the SAME target
+                # from there takes the backward-seek route. The wider six-tick
+                # case requires the engine's matching forward/clock report;
+                # neither case accepts an incorrect tick as the target. Do not
                 # react to a transient ahead sample or chase an unrelated seek.
                 self._check_position_cancelled()
                 self._request("demo_pause")

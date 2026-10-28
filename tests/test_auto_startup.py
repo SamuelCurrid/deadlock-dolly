@@ -603,6 +603,9 @@ class AutoStartupTests(unittest.TestCase):
         self.assertIn("recorded on this build", message)
         self.assertIn("cines.dem", message)
         self.assertIn("game build 10931", message)
+        self.assertIn("directly in Deadlock", message)
+        self.assertIn("experimental repair", message)
+        self.assertNotIn("likely incomplete", message)
         self.assertNotIn("cannot reconstruct", message)
 
     def test_replay_from_a_different_build_keeps_the_mismatch_guidance(self):

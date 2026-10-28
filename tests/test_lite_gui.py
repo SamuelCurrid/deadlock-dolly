@@ -37,7 +37,15 @@ class EditorLauncherTests(unittest.TestCase):
                 app._submit.call_args.args[1]()
             self.assertNotIn('-dolly-lite',app.controller.start_editing.call_args.kwargs['launch_options'])
         finally:
-            if app is not None:app.closed=True;app.operations.shutdown()
+            if app is not None:
+                app.closed = True
+                app.startup_bar.stop()
+                app.operations.shutdown()
+            # The test invokes startup without running the normal completion
+            # callback. Cancel its pending poll and progress timers before
+            # destroying this root so they cannot fire in a later Tk test.
+            for timer in root.tk.splitlist(root.tk.call("after", "info")):
+                root.tk.call("after", "cancel", timer)
             root.destroy()
 
 if __name__=='__main__':unittest.main()

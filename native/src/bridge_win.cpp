@@ -1080,7 +1080,8 @@ static void on_view(void* self, std::uintptr_t caller) noexcept {
                               !picker_editor.playing && !picker_editor.busy,
                           manual_pose, picker_fov, picker_offsets, sample_picker,
                           preview_current ? const_cast<AttachPreview*>(preview.get()) : nullptr,
-                          &picker_attached_preview, (preview_config.hide & 2) != 0, demo.tick);
+                          &picker_attached_preview, (preview_config.hide & 2) != 0, demo.tick,
+                          (preview_config.hide & 4) != 0, (preview_config.hide & 8) != 0);
         if (picker_active)
             player_capture::set_hidden_handle(
                 picker_attached_preview && (preview_config.hide & 1) ? preview_config.handle : 0,
@@ -1102,16 +1103,18 @@ static void on_view(void* self, std::uintptr_t caller) noexcept {
         if (!preview_active)
             preview_paused_sample.reset();
         if (snap_requested && !picker_active && !preview_active && preview_current &&
-            preview->cache.ready && manual_mode) {
+            preview->cache.ready && manual_mode && demo.paused && !demo.seeking) {
             snap_seen = preview_config.snap_request;
             AttachSample snap_sample{};
             const char* snap_error = nullptr;
             AttachSegment snap_segment{};
             snap_segment.point = preview->point;
+            snap_segment.bone_hash = preview->bone_hash;
             if (attach_runtime::sample(preview->schema, preview->cache, snap_segment, snap_sample,
                                        snap_error)) {
                 std::array<double, 6> snapped{};
-                if (attach_snap_offsets(snap_sample, manual_pose, snapped))
+                if (attach_snap_offsets(snap_sample, manual_pose, snapped, true,
+                                        (preview_config.hide & 8) != 0))
                     publish_attach_result(*preview, snapped);
             }
         }
@@ -1132,7 +1135,10 @@ static void on_view(void* self, std::uintptr_t caller) noexcept {
             AttachSegment segment{};
             segment.point = preview->point;
             segment.bone_hash = preview->bone_hash;
-            segment.flags = (preview_config.hide & 2) ? 4u : 0u;
+            segment.flags = ((preview_config.hide & 2) ? 4u : 0u) |
+                            ((preview_config.hide & 4) ? 8u : 0u) |
+                            ((preview_config.hide & 8) ? 16u : 0u);
+            segment.smoothing = preview->smoothing;
             for (int index = 0; index < 6; ++index)
                 segment.offset[index] = preview_offsets[index];
             if (!attach_runtime::sample(preview->schema, preview->cache, segment, preview_sample,
@@ -1147,15 +1153,12 @@ static void on_view(void* self, std::uintptr_t caller) noexcept {
                                    preview_sample, now, status.frame_count, demo.tick, demo.paused);
             preview_paused_sample.apply(preview_sample, demo.paused, demo.tick);
             CameraPose composed = manual_pose;
-            if (!resolve_attach_pose(preview_sample, segment, composed)) {
+            if (!resolve_attach_view(preview_sample, segment, composed, preview_smoothing,
+                                     real_delta)) {
                 fault = 42;
                 finish(State::Fault, fault, "The attach preview pose check failed.");
                 return;
             }
-            preview_smoothing.apply_anchored(composed, preview_sample.motion_anchor, real_delta,
-                                             preview->smoothing,
-                                             attach_smoothing_error_limit(segment));
-            enforce_attach_clearance(preview_sample, segment, composed);
             manual_pose = composed;
             player_capture::set_hidden_handle(
                 (preview_config.hide & 1) ? preview_sample.target.handle : 0, 3);
@@ -1347,15 +1350,12 @@ static void on_view(void* self, std::uintptr_t caller) noexcept {
                                demo.paused);
         paused_samples[segment_index].apply(attach_sample, demo.paused, demo.tick);
         CameraPose resolved = applied;
-        if (!resolve_attach_pose(attach_sample, *attach_segment, resolved)) {
+        if (!resolve_attach_view(attach_sample, *attach_segment, resolved,
+                                 attach_smoothing[segment_index], real_delta)) {
             fault = 42;
             finish(State::Fault, fault, "The attach camera identity or pose check failed.");
             return;
         }
-        attach_smoothing[segment_index].apply_anchored(
-            resolved, attach_sample.motion_anchor, real_delta, attach_segment->smoothing,
-            attach_smoothing_error_limit(*attach_segment));
-        enforce_attach_clearance(attach_sample, *attach_segment, resolved);
         applied = resolved;
         hidden_current = (attach_segment->flags & 2) ? attach_sample.target.handle : 0;
     }
@@ -1382,15 +1382,12 @@ static void on_view(void* self, std::uintptr_t caller) noexcept {
                                    *arriving, sample, now, status.frame_count, demo.tick,
                                    demo.paused);
             paused_samples[index].apply(sample, demo.paused, demo.tick);
-            if (!resolve_attach_pose(sample, *arriving, destination)) {
+            if (!resolve_attach_view(sample, *arriving, destination, attach_smoothing[index],
+                                     real_delta)) {
                 fault = 42;
                 finish(State::Fault, fault, "The arriving camera pose check failed.");
                 return;
             }
-            attach_smoothing[index].apply_anchored(destination, sample.motion_anchor, real_delta,
-                                                   arriving->smoothing,
-                                                   attach_smoothing_error_limit(*arriving));
-            enforce_attach_clearance(sample, *arriving, destination);
             hidden_arriving = (arriving->flags & 2) ? sample.target.handle : 0;
         }
         applied = blend_attach_poses(applied, destination, blend_weight);

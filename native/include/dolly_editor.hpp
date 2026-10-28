@@ -155,7 +155,8 @@ enum class EditorAction : std::uint32_t {
     // Selected authored camera seek; existing replay/shot seek IDs stay fixed.
     SeekCamera,
     SetVideoAeCamera,
-    SetVideoUsdCamera
+    SetVideoUsdCamera,
+    SetAttachVerticalAimLock
 };
 static_assert(static_cast<std::uint32_t>(EditorAction::SeekCamera) == 119,
               "Stable selected-camera seek action ID");
@@ -178,6 +179,8 @@ static_assert(static_cast<std::uint32_t>(EditorAction::SetVideoAeCamera) == 120,
               "Stable After Effects camera export action ID");
 static_assert(static_cast<std::uint32_t>(EditorAction::SetVideoUsdCamera) == 121,
               "Stable USD camera export action ID");
+static_assert(static_cast<std::uint32_t>(EditorAction::SetAttachVerticalAimLock) == 122,
+              "Stable per-camera vertical aim lock action ID");
 static_assert(static_cast<std::uint32_t>(EditorAction::TakeScreenshot) == 98,
               "Stable screenshot action ID");
 static_assert(static_cast<std::uint32_t>(EditorAction::ObjectPickerOpen) == 99 &&
@@ -295,6 +298,7 @@ struct EditorAttachConfig {
     // ABI 3 uses reserved2 for source blend milliseconds (0..10000).
     std::uint32_t handle, entity_id, target_index, point, hide, reserved2;
     // ABI 5: hide bit 0 hides the model; bit 1 enables approximate clearance.
+    // ABI 6: bit 2 uses a composed target-relative orientation.
     double offset[6];
     double smoothing;
     std::uint32_t attached_keys, key_count;
@@ -620,7 +624,7 @@ struct EditorSnapshot {
          replay_show_hud = false;
     double follow_distance = 135, follow_shoulder = 34, follow_height = 0;
     bool attach_available = false, attach_selected = false, attach_hide = true;
-    bool attach_auto_clearance = false;
+    bool attach_auto_clearance = false, attach_lock_vertical_aim = false;
     bool attach_preview = false, bone_picker = false;
     std::uint32_t attach_point = 0, attach_target_index = 0, roster_count = 0;
     char attach_bone[65]{};

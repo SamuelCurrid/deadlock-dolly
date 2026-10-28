@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from collections import deque
+import argparse
 import importlib.metadata
 import json
 import os
@@ -136,7 +137,19 @@ def run_regression_tests(root: Path, log_path: Path) -> None:
         raise
 
 
-def main() -> int:
+def distribution_dir(output_dir: Path | None, version: str) -> Path:
+    """Allow a separate candidate folder without overwriting its artifacts."""
+    if output_dir is None:
+        return ROOT / "dist"
+    destination = Path(output_dir)
+    for name in (f"Deadlock_Dolly_{version}_Windows_x64.zip",
+                 f"Deadlock_Dolly_{version}_Source.zip", "SHA256SUMS.txt"):
+        if (destination / name).exists():
+            raise FileExistsError(f"Release output already exists: {destination / name}")
+    return destination
+
+
+def main(output_dir: Path | None = None) -> int:
     if sys.platform != "win32" or struct.calcsize("P") != 8 or platform.machine().lower() not in {"amd64", "x86_64"}:
         raise RuntimeError("Build Dolly.exe on Windows x64 or use the included GitHub Actions workflow")
     if sys.version_info[:2] != (3, 12):
@@ -148,6 +161,7 @@ def main() -> int:
         raise RuntimeError("Install the pinned requirements-build.txt in the build environment")
     notes = ROOT / "docs" / f"RELEASE_NOTES_{__version__}.md"
     validate_publish_body(notes.read_text(encoding="utf-8-sig"), __version__)
+    dist = distribution_dir(output_dir, __version__)
     build = ROOT / "build"
     checks = build / "checks"
     checks.mkdir(parents=True, exist_ok=True)
@@ -237,8 +251,7 @@ def main() -> int:
     (bundle / "BUILD_INFO.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
     from dolly.updater import write_manifest
     write_manifest(bundle, __version__)
-    dist = ROOT / "dist"
-    dist.mkdir(exist_ok=True)
+    dist.mkdir(parents=True, exist_ok=True)
     windows_zip = dist / f"Deadlock_Dolly_{__version__}_Windows_x64.zip"
     bundle_zip(bundle, windows_zip)
     sources = source_zip(ROOT, dist / f"Deadlock_Dolly_{__version__}_Source.zip")
@@ -248,8 +261,11 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output-dir", type=Path, help="Save release files in a separate directory")
+    arguments = parser.parse_args()
     try:
-        raise SystemExit(main())
+        raise SystemExit(main(arguments.output_dir))
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
         print(f"Build failed: {error}", file=sys.stderr)
         raise SystemExit(1)

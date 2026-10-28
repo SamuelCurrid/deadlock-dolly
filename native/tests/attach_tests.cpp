@@ -132,6 +132,19 @@ std::vector<std::uint8_t> attach_block2(const std::vector<dolly::AttachSegment>&
     return data;
 }
 
+std::vector<std::uint8_t> attach_block4(const std::vector<dolly::AttachSegment>& segments) {
+    std::vector<std::uint8_t> data;
+    raw(data, "DLYATT01", 8);
+    u32(data, 4);
+    u32(data, 0);
+    u32(data, static_cast<std::uint32_t>(segments.size()));
+    for (const auto& segment : segments) {
+        push_segment2(data, segment);
+        number(data, segment.source_blend);
+    }
+    return data;
+}
+
 void push_block(std::vector<std::uint8_t>& data, const std::vector<std::uint8_t>& block) {
     data.insert(data.end(), block.begin(), block.end());
 }
@@ -545,6 +558,28 @@ void bone_segments() {
     require(loaded && loaded->point == dolly::AttachPoint::bone,
             "A version-two bone segment loads with its point");
     require(loaded->bone_hash == 0x1122334455667788ull, "The bone hash is preserved");
+    bone.flags |= 8;
+    const auto rigid = attach_block4({bone});
+    require(track.load(rigid.data(), rigid.size(), 1.0, error), "A rigid bone segment loads");
+    require((track.at(.5)->flags & 8) != 0, "A rigid bone segment lost its orientation mode");
+    loaded = track.at(.5);
+    auto old_version = rigid;
+    set_u32(old_version, 8, 3);
+    require(!track.load(old_version.data(), old_version.size(), 1.0, error),
+            "A legacy native block accepted the new orientation flag");
+    bone.flags |= 16;
+    auto locked = attach_block4({bone});
+    require(track.load(locked.data(), locked.size(), 1.0, error) &&
+                (track.at(.5)->flags & 16), "A level-aim segment must load");
+    set_u32(locked, 8, 3);
+    require(!track.load(locked.data(), locked.size(), 1.0, error),
+            "Legacy native blocks must reject the level-aim flag");
+    bone.flags = 16;
+    locked = attach_block4({bone});
+    require(!track.load(locked.data(), locked.size(), 1.0, error),
+            "A disabled segment must not carry the level-aim flag");
+    require(track.load(rigid.data(), rigid.size(), 1.0, error), "Restore rigid test segment");
+    loaded = track.at(.5);
     dolly::AttachSample sample;
     sample.valid = true;
     sample.point = dolly::AttachPoint::bone;
@@ -592,6 +627,71 @@ void python_fixture_loads() {
     require(shot.camera.evaluate(0.5, pose) && near(pose[0], 50.0), "Fixture camera pose differs");
 }
 
+void vertical_aim_lock() {
+    dolly::AttachSample sample{};
+    sample.valid = true;
+    sample.point = dolly::AttachPoint::bone;
+    sample.origin = {100, 200, 300};
+    sample.angles = sample.aim = {0, 60, 0};
+    dolly::AttachSegment segment{};
+    segment.point = sample.point;
+    segment.flags = 1 | 8 | 16;
+    segment.offset = {100, 15, 20, 10, 170, 5};
+    dolly::CameraPose level{}, pitched{};
+    require(dolly::resolve_attach_pose(sample, segment, level), "Level locked bone resolves");
+    sample.angles = sample.aim = {45, 60, 35};
+    require(dolly::resolve_attach_pose(sample, segment, pitched), "Pitched locked bone resolves");
+    for (int i = 0; i < 6; ++i)
+        require(near(level[i], pitched[i], 1e-6),
+                "Vertical aim lock must ignore target pitch and roll");
+
+    // Locked Snap and playback must agree even when the target is tilted.
+    const dolly::CameraPose requested{150, 240, 390, -20, 130, 12, 1.5};
+    require(dolly::attach_snap_offsets(sample, requested, segment.offset, true, true),
+            "Locked Snap must compute offsets");
+    require(dolly::resolve_attach_pose(sample, segment, pitched), "Locked Snap resolves");
+    for (int i = 0; i < 6; ++i)
+        require(near(std::remainder(pitched[i] - requested[i], i < 3 ? 1e12 : 360.0), 0, 1e-6),
+                "Locked Snap must preserve the current camera view");
+
+    dolly::AttachSmoothing smoothing;
+    segment.smoothing = .5;
+    sample.motion_anchor = sample.origin;
+    require(dolly::resolve_attach_view(sample, segment, level, smoothing, .016),
+            "Locked smoothed view starts");
+    sample.angles = sample.aim = {-30, 60, -50};
+    require(dolly::resolve_attach_view(sample, segment, pitched, smoothing, .016),
+            "Locked smoothed view follows");
+    for (int i = 0; i < 6; ++i)
+        require(near(level[i], pitched[i], 1e-6), "Smoothing must preserve the level target frame");
+    sample.angles[1] = sample.aim[1] = 120;
+    require(dolly::resolve_attach_pose(sample, segment, pitched), "Locked yaw resolves");
+    require(!near(level[0], pitched[0], 1e-4) || !near(level[1], pitched[1], 1e-4),
+            "Vertical lock must still follow the player's yaw");
+
+    // The clearance guide uses the same level frame as Snap and playback.
+    segment.flags |= 4;
+    segment.offset = {0, 0, 0, 0, 0, 0};
+    sample.angles = sample.aim = {0, 60, 0};
+    require(dolly::resolve_attach_pose(sample, segment, level), "Level clearance resolves");
+    dolly::enforce_attach_clearance(sample, segment, level);
+    sample.angles = sample.aim = {45, 60, 35};
+    require(dolly::resolve_attach_pose(sample, segment, pitched), "Pitched clearance resolves");
+    dolly::enforce_attach_clearance(sample, segment, pitched);
+    for (int i = 0; i < 6; ++i)
+        require(near(level[i], pitched[i], 1e-6), "Clearance must use the level frame");
+
+    // Eyes intentionally retains the full aim, even if a saved option exists.
+    sample.point = segment.point = dolly::AttachPoint::eyes;
+    sample.eye_local = {0, 0, 64};
+    segment.flags = 1 | 8;
+    require(dolly::resolve_attach_pose(sample, segment, level), "Eyes pose resolves");
+    segment.flags |= 16;
+    require(dolly::resolve_attach_pose(sample, segment, pitched), "Eyes with lock resolves");
+    for (int i = 0; i < 6; ++i)
+        require(near(level[i], pitched[i], 1e-6), "Vertical lock must not change Eyes");
+}
+
 void snap_round_trip() {
     dolly::AttachSample sample;
     sample.valid = true;
@@ -616,6 +716,123 @@ void snap_round_trip() {
     dolly::CameraPose broken = camera;
     broken[0] = std::numeric_limits<double>::quiet_NaN();
     require(!dolly::attach_snap_offsets(sample, broken, offsets), "A nonfinite camera is refused");
+
+    // A face-facing camera starts 100 units in front of the selected bone.
+    // When the player pitches while moving, a rigid snap should still point
+    // directly at that bone instead of losing the framing.
+    dolly::AttachSample moving{};
+    moving.valid = true;
+    moving.point = dolly::AttachPoint::bone;
+    moving.origin = {100, 200, 300};
+    const dolly::CameraPose face_camera{200, 200, 300, 0, 180, 0, 16.0 / 9};
+    require(dolly::attach_snap_offsets(moving, face_camera, offsets, true),
+            "Face-facing bone snap computes offsets");
+    dolly::AttachSegment face{};
+    face.point = moving.point;
+    face.flags = 1 | 8; // Rigid snap: preserve the camera in the target frame.
+    face.offset = offsets;
+    moving.origin = {130, 170, 360};
+    moving.angles = moving.aim = {45, 0, 0};
+    dolly::CameraPose followed{};
+    require(dolly::resolve_attach_pose(moving, face, followed), "Moved bone resolves");
+    constexpr double radians = 3.14159265358979323846 / 180.0;
+    const auto pitch = followed[3] * radians, yaw = followed[4] * radians;
+    const std::array<double, 3> look{
+        std::cos(pitch) * std::cos(yaw), std::cos(pitch) * std::sin(yaw), -std::sin(pitch)};
+    double dot = 0, distance = 0;
+    for (int axis = 0; axis < 3; ++axis) {
+        const double toward_bone = moving.origin[axis] - followed[axis];
+        dot += look[axis] * toward_bone;
+        distance += toward_bone * toward_bone;
+    }
+    require(distance > 1 && dot / std::sqrt(distance) > 0.999999,
+            "Snapped camera lost the selected bone when player aim pitched");
+
+    dolly::AttachSmoothing rigid_smoothing;
+    face.smoothing = 0.5;
+    moving.origin = moving.motion_anchor = {100, 200, 300};
+    moving.angles = moving.aim = {0, 0, 0};
+    dolly::CameraPose smoothed{};
+    require(dolly::resolve_attach_view(moving, face, smoothed, rigid_smoothing, .016),
+            "Rigid view could not start smoothing");
+    moving.angles = moving.aim = {0, 90, 0};
+    require(dolly::resolve_attach_view(moving, face, smoothed, rigid_smoothing, .016),
+            "Rigid view could not smooth a moving target");
+    const auto smoothed_pitch = smoothed[3] * radians, smoothed_yaw = smoothed[4] * radians;
+    const std::array<double, 3> smoothed_look{
+        std::cos(smoothed_pitch) * std::cos(smoothed_yaw),
+        std::cos(smoothed_pitch) * std::sin(smoothed_yaw), -std::sin(smoothed_pitch)};
+    dot = distance = 0;
+    for (int axis = 0; axis < 3; ++axis) {
+        const double toward_bone = moving.origin[axis] - smoothed[axis];
+        dot += smoothed_look[axis] * toward_bone;
+        distance += toward_bone * toward_bone;
+    }
+    require(distance > 1 && dot / std::sqrt(distance) > 0.999999,
+            "Smoothing moved the snapped framing away from the bone");
+    for (int step = 0; step < 40; ++step) {
+        // Player translation includes abrupt dashes and jumps while aim
+        // changes. The same local camera framing must remain on the bone.
+        moving.origin = moving.motion_anchor = {
+            100.0 + step * 12.0, 200.0 - step * 3.0, 300.0 + (step % 3) * 25.0};
+        moving.angles = moving.aim = {
+            double((step * 13) % 140 - 70), double((step * 37) % 360 - 180),
+            double((step * 11) % 100 - 50)};
+        require(dolly::resolve_attach_view(moving, face, smoothed, rigid_smoothing, .016),
+                "Rigid view failed during a dash or jump");
+        const auto p = smoothed[3] * radians, y = smoothed[4] * radians;
+        const std::array<double, 3> direction{
+            std::cos(p) * std::cos(y), std::cos(p) * std::sin(y), -std::sin(p)};
+        dot = distance = 0;
+        for (int axis = 0; axis < 3; ++axis) {
+            const double toward_bone = moving.origin[axis] - smoothed[axis];
+            dot += direction[axis] * toward_bone;
+            distance += toward_bone * toward_bone;
+        }
+        require(near(std::sqrt(distance), 100, 1e-6) && dot / std::sqrt(distance) > .999999,
+                "Rigid snap changed distance or framing during player motion");
+    }
+
+    // A rotated target and an arbitrary camera must reproduce the full
+    // orientation, not just its forward direction. Check the right vector too
+    // so a wrong roll cannot pass; include both vertical singularities.
+    const auto directions = [](const dolly::CameraPose& view) {
+        constexpr double radians = 3.14159265358979323846 / 180.0;
+        const double p = view[3] * radians, y = view[4] * radians, r = view[5] * radians;
+        return std::array<double, 6>{
+            std::cos(p) * std::cos(y), std::cos(p) * std::sin(y), -std::sin(p),
+            -std::sin(r) * std::sin(p) * std::cos(y) + std::cos(r) * std::sin(y),
+            -std::sin(r) * std::sin(p) * std::sin(y) - std::cos(r) * std::cos(y),
+            -std::sin(r) * std::cos(p)};
+    };
+    const std::array<std::array<double, 3>, 4> targets{{
+        {25, 40, 5}, {-48, 170, -32}, {90, 27, 55}, {-90, -140, -20}}};
+    const std::array<std::array<double, 3>, 4> cameras{{
+        {31, -160, 22}, {90, 120, 35}, {-90, -30, 14}, {-18, 89, 170}}};
+    for (std::size_t i = 0; i < targets.size(); ++i) {
+        moving.angles = moving.aim = targets[i];
+        const dolly::CameraPose requested{155, 240, 400,
+                                         cameras[i][0], cameras[i][1], cameras[i][2], 1.5};
+        require(dolly::attach_snap_offsets(moving, requested, face.offset, true),
+                "Rigid snap rejected a valid rotated pose");
+        dolly::CameraPose actual{};
+        require(dolly::resolve_attach_pose(moving, face, actual),
+                "Rigid snap could not resolve its rotated pose");
+        for (int axis = 0; axis < 3; ++axis)
+            require(near(actual[axis], requested[axis], 1e-6),
+                    "Rigid snap did not preserve the camera position");
+        const auto wanted_axes = directions(requested), actual_axes = directions(actual);
+        for (int axis = 0; axis < 6; ++axis)
+            require(near(actual_axes[axis], wanted_axes[axis], 1e-6),
+                    "Rigid snap did not preserve the camera orientation");
+    }
+    // Existing shots retain the original component-wise angle convention.
+    face.flags = 1;
+    face.offset = {0, 0, 0, 0, 180, 0};
+    moving.angles = moving.aim = {45, 0, 0};
+    require(dolly::resolve_attach_pose(moving, face, followed) &&
+                near(followed[3], 45) && near(followed[4], 180),
+            "Legacy attached shots changed orientation");
 }
 
 void envelope_loading() {
@@ -727,6 +944,7 @@ int main() {
         track_rejections();
         bone_segments();
         envelope_loading();
+        vertical_aim_lock();
         snap_round_trip();
         python_fixture_loads();
         std::cout << "Native attach camera tests passed.\n";
