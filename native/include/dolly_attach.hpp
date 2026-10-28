@@ -184,6 +184,12 @@ bool resolve_attach_view(const AttachSample& sample, const AttachSegment& segmen
 bool attach_snap_offsets(const AttachSample& sample, const CameraPose& camera,
                          std::array<double, 6>& out, bool rigid_orientation = false,
                          bool lock_vertical_aim = false) noexcept;
+// Transfer camera-space flight to the authored target-relative offsets. The
+// selected segment supplies the same aim-lock and rotation mode as playback.
+// Invalid input is refused without partially changing the offsets.
+bool attach_apply_camera_motion(const AttachSample& sample, const AttachSegment& segment,
+                                const CameraPose& before, const CameraPose& after,
+                                CameraPose& offsets) noexcept;
 // Quintic easing gives zero slope and acceleration at both ends. Angles take
 // their shortest route; aspect stays with the existing authored lens curve.
 double attach_blend_weight(double phase, double begin, double end) noexcept;

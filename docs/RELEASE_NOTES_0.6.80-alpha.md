@@ -2,9 +2,7 @@
 
 **0.6.80-alpha**
 
-- **Bone camera vertical aim lock.** *Before:* Bone and Weapon views could tilt as a player aimed up or down. *After:* an opt-in per-camera lock keeps the chosen vertical angle steady. Detach and Snap again when changing it. Thanks to [@ExoCalibra](https://github.com/ExoCalibra) for the original contribution.
-
-- **Experimental replay repair.** *Before:* some locally recorded demos crashed Deadlock while loading. *After:* Dolly can make a separate experimental copy for one specific resource-loading problem; the original stays untouched and the copy still needs a playback test.
+- **Experimental replay repair.** *Before:* some locally recorded demos crashed Deadlock while loading. *After:* use **Try replay repair...** in Replay to create a separate copy for a specific resource-loading issue. One previously crashing replay was tested successfully at both affected areas. The original stays untouched; test each repaired copy because results may vary.
 
 - **More accurate video color.** *Before:* compressed exports could appear with shifted colors in editing software. *After:* SDR color recordings and alpha layers use Rec. 709 conversion and color information.
 

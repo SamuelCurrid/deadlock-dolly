@@ -89,6 +89,13 @@ that a crouched, folded, hidden, or wall-obstructed character will read clearly.
 Cancel and choose a better replay moment when needed. There is no verified
 mesh collision query; orbiting near walls can put the camera behind scenery.
 
+During attached preview, flight movement follows the camera's displayed view.
+With the default bindings, **W/S** move forward or backward along the view,
+**A/D** move sideways, and the vertical controls move up and down. These movements update the
+selected camera's attachment offsets. The view and target frames can differ
+while smoothing; Dolly uses the displayed view for movement and keeps the
+selected camera's aim-lock setting.
+
 The picker uses the selected model's verified named skeleton. Extra merged pose
 entries without names are not invented as selectable bones. If the model cannot
 provide a complete validated name table, the picker reports that limitation and

@@ -13,7 +13,7 @@
 
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D4)
 ![License](https://img.shields.io/badge/license-MIT-2ea44f)
-[![Version](https://img.shields.io/badge/version-0.6.79--alpha-orange)](https://github.com/cravvnn/deadlock-dolly/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/cravvnn/deadlock-dolly?include_prereleases&label=latest%20release&color=orange)](https://github.com/cravvnn/deadlock-dolly/releases/latest)
 
 ![Deadlock Dolly demo](assets/dolly-demo.gif)
 
@@ -22,8 +22,10 @@
 Capture views from a local replay, shape a camera path and play it back with
 animated framing and effects. Edit through the desktop or directly in the game.
 
-**Current source: 0.6.79-alpha · Windows x64 · DirectX 11.** The portable app
-includes Python and Tcl/Tk; no separate installation is needed.
+**Current source: 0.6.80-alpha development · Windows x64 · DirectX 11.**
+The source includes unreleased changes that may not be in the latest download;
+native source changes need a matching rebuilt helper. The portable app includes
+Python and Tcl/Tk; no separate installation is needed.
 
 > **Local replays only — use at your own risk.** Dolly injects a native DLL
 > into Deadlock. Keep `-insecure` in Deadlock's launch options while using Dolly.
@@ -59,7 +61,9 @@ See the
 - **Camera paths and curves.** Shared desktop/in-game editing for position,
   rotation and aspect ratio, position tangent handles, Undo/Redo and live path guides.
 - **Follow and Bone Picker.** Follow a replay participant with the game's camera,
-  adjust framing, or attach a camera to a selected bone.
+  adjust framing, or attach a camera to a selected bone. Current source adds a
+  per-camera vertical-aim lock and camera-relative movement in attached preview.
+  See the [Bone Picker guide](docs/BONE_PICKER.md).
 - **Framing and depth of field.** Animate aspect ratio and supported DOF controls
   alongside the camera path.
 - **Video and audio.** Real-time or fixed-step exports, 30-600 FPS output settings,
@@ -75,6 +79,9 @@ See the
 - **Discord Rich Presence.** Show editing and export activity, a session timer
   and links to Dolly. Turn it off in Settings; replay names and file paths stay private.
   See the [Discord presence guide](docs/DISCORD_PRESENCE.md).
+- **Experimental replay repair.** Create a separate repair copy for a specific
+  replay manifest problem; the original replay remains untouched. Test the copy
+  in Deadlock because repairs are not guaranteed to work for every replay.
 
 ## Guides
 
@@ -170,6 +177,8 @@ replay names.
 
 ## Contributors
 
+- [@ExoCalibra](https://github.com/ExoCalibra) — Bone and Weapon vertical-aim lock and camera-relative movement in attached preview ([PR #29](https://github.com/cravvnn/deadlock-dolly/pull/29)).
+- [@SamuelCurrid](https://github.com/SamuelCurrid) — After Effects and USD camera exports, camera tracks and forward-seek undershoot recovery ([PR #25](https://github.com/cravvnn/deadlock-dolly/pull/25), [PR #28](https://github.com/cravvnn/deadlock-dolly/pull/28)).
 - [@paralin](https://github.com/paralin) — Linux/Proton Steam discovery, Wine mount-point handling and interrupted plugin-cleanup recovery.
 - [@tbhtho](https://github.com/tbhtho) — in-game UI rework and saved panel layouts.
 - [@s34532](https://github.com/s34532) — custom particle effects, native confetti rain, game-only audio capture and reconstructed clip audio.
@@ -187,5 +196,5 @@ separate terms in [assets/README.md](assets/README.md).
 ## Releases
 
 - [Downloads and published release notes](https://github.com/cravvnn/deadlock-dolly/releases)
-- [Current source release notes: 0.6.79-alpha](docs/RELEASE_NOTES_0.6.79-alpha.md)
+- [0.6.80-alpha release notes](docs/RELEASE_NOTES_0.6.80-alpha.md)
 - [Complete changelog](docs/CHANGELOG.md)

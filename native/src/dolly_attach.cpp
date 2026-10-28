@@ -10,7 +10,6 @@ namespace dolly {
 namespace {
 
 constexpr double kDegreesToRadians = 3.14159265358979323846 / 180.0;
-
 class Reader {
 public:
     explicit Reader(const void* data) : cursor_(static_cast<const std::uint8_t*>(data)) {}
@@ -405,6 +404,64 @@ bool resolve_attach_pose(const AttachSample& sample, const AttachSegment& segmen
     for (int i = 0; i < 6; ++i)
         if (!std::isfinite(out[i]) || std::abs(out[i]) > 1e8)
             return false;
+    return true;
+}
+
+bool attach_apply_camera_motion(const AttachSample& sample, const AttachSegment& segment,
+                                const CameraPose& before, const CameraPose& after,
+                                CameraPose& offsets) noexcept {
+    // Resolve the same target frame used for preview and playback. Keep the
+    // update transactional if the target or any of the input values is invalid.
+    CameraPose current = offsets;
+    if (!resolve_attach_pose(sample, segment, current))
+        return false;
+    for (int i = 0; i < 7; ++i)
+        if (!std::isfinite(before[i]) || !std::isfinite(after[i]) || !std::isfinite(offsets[i]) ||
+            (i < 6 && offsets[i] != segment.offset[i]))
+            return false;
+    const std::array<double, 3> delta{after[0] - before[0], after[1] - before[1],
+                                      after[2] - before[2]};
+    if (!finite3(delta, kAttachOffsetLimit))
+        return false;
+    const bool locked = (segment.flags & 16) != 0;
+    const auto base_angles = effective_attach_angles(sample, segment.point, locked);
+    double basis[3][3];
+    source_basis(base_angles, basis);
+    CameraPose next = offsets;
+    for (int axis = 0; axis < 3; ++axis) {
+        double local_delta = 0;
+        for (int i = 0; i < 3; ++i)
+            local_delta += delta[i] * basis[i][axis];
+        next[axis] = std::clamp(offsets[axis] + local_delta, -kAttachOffsetLimit,
+                                kAttachOffsetLimit);
+    }
+    bool turned = false;
+    std::array<double, 3> angle_delta{};
+    for (int axis = 0; axis < 3; ++axis) {
+        const double difference = after[axis + 3] - before[axis + 3];
+        if (!std::isfinite(difference))
+            return false;
+        angle_delta[axis] = std::remainder(difference, 360.0);
+        turned = turned || std::abs(angle_delta[axis]) > 1e-10;
+    }
+    if (turned) {
+        const std::array<double, 3> desired_angles{
+            current[3] + angle_delta[0], current[4] + angle_delta[1], current[5] + angle_delta[2]};
+        std::array<double, 3> local_angles{};
+        if (segment.flags & 8) {
+            double camera_basis[3][3], local_basis[3][3];
+            source_basis(desired_angles, camera_basis);
+            relative_orientation(basis, camera_basis, local_basis);
+            local_angles = basis_angles(local_basis);
+        } else {
+            for (int axis = 0; axis < 3; ++axis)
+                local_angles[axis] = std::remainder(desired_angles[axis] - base_angles[axis], 360.0);
+        }
+        for (int axis = 0; axis < 3; ++axis)
+            next[axis + 3] = local_angles[axis];
+    }
+    next[6] = after[6];
+    offsets = next;
     return true;
 }
 

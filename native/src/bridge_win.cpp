@@ -1120,7 +1120,8 @@ static void on_view(void* self, std::uintptr_t caller) noexcept {
         }
         if (preview_active) {
             bool preview_dirty = false;
-            if (preview_seed != preview->sequence) {
+            const bool preview_reseeded = preview_seed != preview->sequence;
+            if (preview_reseeded) {
                 preview_seed = preview->sequence;
                 for (int index = 0; index < 6; ++index)
                     preview_offsets[index] = preview->authored[index];
@@ -1129,7 +1130,6 @@ static void on_view(void* self, std::uintptr_t caller) noexcept {
                 preview_paused_sample.reset();
                 preview_dirty = true;
             }
-            editor_integrate_flight(preview_offsets, real_delta);
             AttachSample preview_sample{};
             const char* preview_error = nullptr;
             AttachSegment segment{};
@@ -1152,6 +1152,31 @@ static void on_view(void* self, std::uintptr_t caller) noexcept {
             rendered_attach_sample(0, preview, &preview->cache, preview->schema, segment,
                                    preview_sample, now, status.frame_count, demo.tick, demo.paused);
             preview_paused_sample.apply(preview_sample, demo.paused, demo.tick);
+            {
+                CameraPose pre_flight = manual_pose;
+                if (!resolve_attach_pose(preview_sample, segment, pre_flight)) {
+                    fault = 42;
+                    finish(State::Fault, fault, "The attach preview pose check failed.");
+                    return;
+                }
+                // Movement follows the view the user actually saw, including
+                // smoothing, while only input deltas change authored offsets.
+                CameraPose flight_before = pre_flight;
+                if (!preview_reseeded)
+                    for (int axis = 3; axis < 6; ++axis)
+                        flight_before[axis] = manual_pose[axis];
+                flight_before[6] = preview_offsets[6];
+                CameraPose flight_after = flight_before;
+                editor_integrate_flight(flight_after, real_delta);
+                if (!attach_apply_camera_motion(preview_sample, segment, flight_before, flight_after,
+                                                preview_offsets)) {
+                    fault = 42;
+                    finish(State::Fault, fault, "The attach preview motion check failed.");
+                    return;
+                }
+                for (int index = 0; index < 6; ++index)
+                    segment.offset[index] = preview_offsets[index];
+            }
             CameraPose composed = manual_pose;
             if (!resolve_attach_view(preview_sample, segment, composed, preview_smoothing,
                                      real_delta)) {

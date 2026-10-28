@@ -1,5 +1,6 @@
 #include "dolly_attach.hpp"
 #include "dolly_effects.hpp"
+#include "dolly_flight.hpp"
 #include "dolly_hide.hpp"
 
 #include <cmath>
@@ -692,6 +693,118 @@ void vertical_aim_lock() {
         require(near(level[i], pitched[i], 1e-6), "Vertical lock must not change Eyes");
 }
 
+void camera_relative_preview_motion() {
+    constexpr double radians = 3.14159265358979323846 / 180.0;
+    for (const auto point : {dolly::AttachPoint::eyes, dolly::AttachPoint::weapon,
+                             dolly::AttachPoint::bone}) {
+        for (const std::uint32_t flags : {1u, 1u | 8u, 1u | 16u, 1u | 8u | 16u}) {
+            dolly::AttachSample sample{};
+            sample.valid = true;
+            sample.point = point;
+            sample.target = {11, 4, 123};
+            sample.origin = {100, 200, 300};
+            sample.angles = sample.aim = {35, 70, 20};
+            sample.eye_local = {0, 0, 64};
+            dolly::AttachSegment segment{};
+            segment.point = point;
+            segment.flags = flags;
+            segment.target = sample.target;
+            segment.offset = {13, -22, 14, 15, 150, -15};
+            dolly::CameraPose offsets{};
+            std::copy(segment.offset.begin(), segment.offset.end(), offsets.begin());
+            offsets[6] = 1.5;
+            dolly::CameraPose before = offsets;
+            require(dolly::resolve_attach_pose(sample, segment, before), "Flight target resolves");
+            dolly::CameraPose after = before;
+            dolly::FlightInput input{};
+            input.forward = 1;
+            input.mouse_x = -80;
+            input.mouse_y = 35;
+            dolly::integrate_flight(after, input, .05, 100, .08);
+            after[6] = 1.3;
+            const double pitch = after[3] * radians, yaw = after[4] * radians;
+            require(near(after[0] - before[0], 5 * std::cos(pitch) * std::cos(yaw), 1e-6) &&
+                        near(after[1] - before[1], 5 * std::cos(pitch) * std::sin(yaw), 1e-6) &&
+                        near(after[2] - before[2], -5 * std::sin(pitch), 1e-6),
+                    "Forward movement must follow the camera's look direction");
+            require(dolly::attach_apply_camera_motion(sample, segment, before, after, offsets),
+                    "Camera-relative preview motion was refused");
+            std::copy(offsets.begin(), offsets.begin() + 6, segment.offset.begin());
+            dolly::CameraPose resolved = offsets;
+            require(dolly::resolve_attach_pose(sample, segment, resolved), "Moved preview resolves");
+            for (int axis = 0; axis < 3; ++axis) {
+                require(near(resolved[axis], after[axis], 1e-6),
+                        "Moved preview did not follow the camera-space translation");
+                require(near(std::remainder(resolved[axis + 3] - after[axis + 3], 360.0), 0, 1e-6),
+                        "Moved preview did not preserve the camera-space rotation");
+            }
+            require(near(offsets[6], 1.3), "Framing must follow the live camera");
+            const auto unchanged = offsets;
+            require(dolly::attach_apply_camera_motion(sample, segment, resolved, resolved, offsets) &&
+                        offsets == unchanged, "Idle flight must not rewrite authored offsets");
+            after[0] = std::numeric_limits<double>::quiet_NaN();
+            require(!dolly::attach_apply_camera_motion(sample, segment, resolved, after, offsets) &&
+                        offsets == unchanged, "Invalid flight must not partially change offsets");
+            sample.target.handle = 99;
+            require(!dolly::attach_apply_camera_motion(sample, segment, resolved, resolved, offsets) &&
+                        offsets == unchanged, "Flight must reject a different target");
+        }
+    }
+    // A smoothed visible view may lag the target's current orientation.
+    // Movement follows that view without counteracting target motion.
+    dolly::AttachSample moving{};
+    moving.valid = true;
+    moving.point = dolly::AttachPoint::bone;
+    moving.origin = {100, 200, 300};
+    moving.angles = moving.aim = {35, 70, 20};
+    dolly::AttachSegment moving_segment{};
+    moving_segment.point = moving.point;
+    moving_segment.flags = 1 | 8;
+    moving_segment.offset = {10, 12, 5, 15, 150, -30};
+    dolly::CameraPose moving_offsets{10, 12, 5, 15, 150, -30, 1.5};
+    dolly::CameraPose nominal = moving_offsets;
+    require(dolly::resolve_attach_pose(moving, moving_segment, nominal), "Moving target resolves");
+    auto displayed = nominal;
+    displayed[3] -= 20;
+    displayed[4] += 60;
+    auto steered = displayed;
+    dolly::FlightInput input{};
+    input.forward = 1;
+    input.mouse_x = -100;
+    input.mouse_y = 25;
+    dolly::integrate_flight(steered, input, .05, 100, .08);
+    require(dolly::attach_apply_camera_motion(moving, moving_segment, displayed, steered, moving_offsets),
+            "Smoothed-view input was refused");
+    std::copy(moving_offsets.begin(), moving_offsets.begin() + 6, moving_segment.offset.begin());
+    dolly::CameraPose moved = moving_offsets;
+    require(dolly::resolve_attach_pose(moving, moving_segment, moved), "Steered target resolves");
+    for (int axis = 0; axis < 3; ++axis) {
+        require(near(moved[axis] - nominal[axis], steered[axis] - displayed[axis], 1e-6),
+                "Movement did not follow the displayed camera while smoothing");
+        require(near(std::remainder((moved[axis + 3] - nominal[axis + 3]) -
+                                    (steered[axis + 3] - displayed[axis + 3]), 360.0), 0, 1e-6),
+                "Steering did not preserve the visible camera's rotation input");
+    }
+    const auto idle_offsets = moving_offsets;
+    moving.origin = {200, 300, 400};
+    moving.angles = moving.aim = {-25, 140, 10};
+    require(dolly::attach_apply_camera_motion(moving, moving_segment, displayed, displayed, moving_offsets) &&
+                moving_offsets == idle_offsets, "Target motion alone must not change authored offsets");
+
+    dolly::AttachSample sample{};
+    sample.valid = true;
+    sample.point = dolly::AttachPoint::bone;
+    dolly::AttachSegment segment{};
+    segment.point = sample.point;
+    segment.offset[0] = 9999;
+    dolly::CameraPose offsets{9999, 0, 0, 0, 0, 0, 1.5}, after = offsets;
+    require(dolly::resolve_attach_pose(sample, segment, after), "Bounded flight pose resolves");
+    const auto before = after;
+    after[0] += 50;
+    require(dolly::attach_apply_camera_motion(sample, segment, before, after, offsets) &&
+                near(offsets[0], dolly::kAttachOffsetLimit), "Flight must clamp the authored offset");
+}
+
 void snap_round_trip() {
     dolly::AttachSample sample;
     sample.valid = true;
@@ -945,6 +1058,7 @@ int main() {
         bone_segments();
         envelope_loading();
         vertical_aim_lock();
+        camera_relative_preview_motion();
         snap_round_trip();
         python_fixture_loads();
         std::cout << "Native attach camera tests passed.\n";

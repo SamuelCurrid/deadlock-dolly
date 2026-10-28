@@ -530,7 +530,8 @@ In-game, choose the player and point in the **BONE PICKER** tab. Enter
 **Fly camera**, frame your view, then use **Snap** to calculate offsets that
 reproduce it and keep that framing relative to the selected point as it moves.
 **Attach here** previews the source; moving while attached edits
-its offsets. **Detach** ends live preview. **Hide this hero** suppresses the
+its offsets, with flight movement following the displayed camera direction.
+**Detach** ends live preview. **Hide this hero** suppresses the
 identified body draws during preview and playback. Export follows the saved
 sources and offsets, including edits made in preview.
 
