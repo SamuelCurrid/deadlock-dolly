@@ -496,6 +496,51 @@ struct AttachPreview {
     std::uint64_t model = 0;
     std::uint64_t bone_hash = 0;
 };
+
+// Offset publications can advance the config sequence while the same camera
+// is still moving. Preserve its viewing direction and smoothing across those
+// updates, but never across a changed target, mode or selected view.
+struct AttachPreviewIdentity {
+    std::uint32_t command = 0, selected = 0, handle = 0, entity = 0, point = 0, modes = 0;
+    std::uint64_t model = 0, bone = 0;
+    std::uintptr_t pawn = 0, identity = 0, node = 0, model_object = 0, bone_array = 0;
+    std::array<std::uint32_t, 8> schema{};
+    bool operator==(const AttachPreviewIdentity& other) const noexcept {
+        return command == other.command && selected == other.selected && handle == other.handle &&
+               entity == other.entity && point == other.point && modes == other.modes &&
+               model == other.model && bone == other.bone && pawn == other.pawn &&
+               identity == other.identity && node == other.node && model_object == other.model_object &&
+               bone_array == other.bone_array && schema == other.schema;
+    }
+};
+
+struct AttachPreviewContinuity {
+    bool active = false;
+    AttachPreviewIdentity previous{};
+    void reset() noexcept { active = false; }
+    bool observe(const AttachPreview& preview, const EditorAttachConfig& config,
+                 std::uint32_t selected) noexcept {
+        AttachPreviewIdentity next{};
+        next.command = preview.camera_command;
+        next.selected = selected;
+        next.handle = preview.handle;
+        next.entity = preview.entity_index;
+        next.point = static_cast<std::uint32_t>(preview.point);
+        next.modes = config.hide & 14;
+        next.model = preview.model;
+        next.bone = preview.bone_hash;
+        next.pawn = preview.cache.pawn;
+        next.identity = preview.cache.identity;
+        next.node = preview.cache.node;
+        next.model_object = preview.cache.model_object;
+        next.bone_array = preview.cache.bone_array;
+        std::copy(std::begin(config.offsets), std::end(config.offsets), next.schema.begin());
+        const bool continued = active && previous == next;
+        previous = next;
+        active = true;
+        return continued;
+    }
+};
 std::shared_ptr<const AttachPreview> gAttachPreview;
 
 // Two slots cover the active source and a blended arrival. A try-lock only
@@ -1048,6 +1093,7 @@ static void on_view(void* self, std::uintptr_t caller) noexcept {
         static PausedAttachSample<AttachSample> preview_paused_sample;
         static CameraPose preview_offsets;
         static std::uint32_t preview_seed = 0;
+        static AttachPreviewContinuity preview_continuity;
         static std::array<double, 6> preview_published{};
         static std::uint32_t snap_seen = 0;
         const bool snap_requested = preview_config.snap_request != snap_seen;
@@ -1100,8 +1146,10 @@ static void on_view(void* self, std::uintptr_t caller) noexcept {
         }
         const bool preview_active =
             preview_current && preview->cache.ready && preview_flag && manual_mode;
-        if (!preview_active)
+        if (!preview_active) {
             preview_paused_sample.reset();
+            preview_continuity.reset();
+        }
         if (snap_requested && !picker_active && !preview_active && preview_current &&
             preview->cache.ready && manual_mode && demo.paused && !demo.seeking) {
             snap_seen = preview_config.snap_request;
@@ -1120,14 +1168,18 @@ static void on_view(void* self, std::uintptr_t caller) noexcept {
         }
         if (preview_active) {
             bool preview_dirty = false;
-            const bool preview_reseeded = preview_seed != preview->sequence;
+            const bool continued = preview_continuity.observe(*preview, preview_config,
+                                                               picker_editor.selected_camera);
+            const bool preview_reseeded = !continued || preview_seed != preview->sequence;
             if (preview_reseeded) {
                 preview_seed = preview->sequence;
                 for (int index = 0; index < 6; ++index)
                     preview_offsets[index] = preview->authored[index];
                 preview_offsets[6] = manual_pose[6];
-                preview_smoothing.reset();
-                preview_paused_sample.reset();
+                if (!continued) {
+                    preview_smoothing.reset();
+                    preview_paused_sample.reset();
+                }
                 preview_dirty = true;
             }
             AttachSample preview_sample{};
@@ -1162,7 +1214,7 @@ static void on_view(void* self, std::uintptr_t caller) noexcept {
                 // Movement follows the view the user actually saw, including
                 // smoothing, while only input deltas change authored offsets.
                 CameraPose flight_before = pre_flight;
-                if (!preview_reseeded)
+                if (continued)
                     for (int axis = 3; axis < 6; ++axis)
                         flight_before[axis] = manual_pose[axis];
                 flight_before[6] = preview_offsets[6];

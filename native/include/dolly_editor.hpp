@@ -298,7 +298,7 @@ struct EditorAttachConfig {
     // ABI 3 uses reserved2 for source blend milliseconds (0..10000).
     std::uint32_t handle, entity_id, target_index, point, hide, reserved2;
     // ABI 5: hide bit 0 hides the model; bit 1 enables approximate clearance.
-    // ABI 6: bit 2 uses a composed target-relative orientation.
+    // ABI 6: bit 2 uses composed orientation; bit 3 locks vertical aim.
     double offset[6];
     double smoothing;
     std::uint32_t attached_keys, key_count;

@@ -163,6 +163,48 @@ void gameplay_effect_filter_checks() {
             "Another gameplay object type was accepted");
 }
 
+void attach_preview_continuity_checks() {
+    AttachPreview preview{};
+    preview.camera_command = 7;
+    preview.handle = 11;
+    preview.entity_index = 4;
+    preview.model = 123;
+    preview.point = AttachPoint::bone;
+    preview.bone_hash = 456;
+    preview.cache.pawn = 1000;
+    preview.cache.identity = 2000;
+    preview.cache.node = 3000;
+    preview.cache.model_object = 4000;
+    preview.cache.bone_array = 5000;
+    EditorAttachConfig config{};
+    config.sequence = 2;
+    config.hide = 4;
+    std::fill(std::begin(config.offsets), std::end(config.offsets), 8u);
+    AttachPreviewContinuity continuity{};
+    require(!continuity.observe(preview, config, 1), "A new preview reused an old camera view");
+    config.sequence = 4;
+    config.offset[0] = 25;
+    preview.authored[0] = 25;
+    preview.smoothing = .5;
+    config.hide |= 1; // Visibility changes do not change the camera frame.
+    require(continuity.observe(preview, config, 1),
+            "An offset acknowledgement reset the same camera's smoothing");
+    require(!continuity.observe(preview, config, 2), "A different selected camera reused smoothing");
+    require(continuity.observe(preview, config, 2), "Unchanged camera lost continuity");
+    config.hide |= 8;
+    require(!continuity.observe(preview, config, 2), "A different aim mode reused smoothing");
+    preview.bone_hash++;
+    require(!continuity.observe(preview, config, 2), "A different bone reused smoothing");
+    preview.cache.node++;
+    require(!continuity.observe(preview, config, 2), "A reconstructed target reused smoothing");
+    config.offsets[0]++;
+    require(!continuity.observe(preview, config, 2), "A different schema reused smoothing");
+    preview.camera_command++;
+    require(!continuity.observe(preview, config, 2), "A different camera command reused smoothing");
+    continuity.reset();
+    require(!continuity.observe(preview, config, 2), "A detached preview reused its old view");
+}
+
 void bone_string_bounds() {
     Allocation text(0x1000);
     char name[65];
@@ -2405,6 +2447,7 @@ void run() {
     gameplay_effect_filter_checks();
     confetti_control_updates();
     confetti_diagnostics_publish();
+    attach_preview_continuity_checks();
     bone_string_bounds();
     owned_model_bones();
     camera_cache_decoder();
